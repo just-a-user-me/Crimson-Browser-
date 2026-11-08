@@ -1,0 +1,101 @@
+name: Build Crimson
+
+on:
+  push:
+    branches:
+      - main
+      - iceraven
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Clone android-components
+        run: |
+          git clone --depth 1 --branch master https://github.com/akliuxingyuan/android-components android-components
+          git -C android-components rev-parse HEAD
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Ensure python alias and venv
+        run: |
+          if ! command -v python >/dev/null 2>&1; then
+            sudo ln -sf "$(command -v python3)" /usr/local/bin/python
+          fi
+          python3 -m venv --help >/dev/null
+
+      - name: Install Android SDK with pieces Gradle skips
+        run: ./automation/iceraven/install-sdk.sh
+
+      - name: Inspect memory
+        run: free -h
+
+      - name: Create version name
+        run: echo "VERSION_NAME=crimson-$(date +%Y%m%d)-$(git rev-parse --short HEAD)" >> $GITHUB_ENV
+
+      - name: Patch on the fly
+        run: |
+          ./automation/iceraven/patch_android_components.sh
+          ./automation/iceraven/setup_venv.sh
+
+      - name: Replace strings
+        run: |
+          sed -i "s/Firefox/Crimson/g" app/src/*/res/values*/*strings.xml
+          sed -i "/<string name=\"trackers_blocked_panel_categorical_num_trackers_blocked\">/s/%s/%1\$s/g; /<string name=\"trackers_blocked_panel_categorical_num_trackers_blocked\">/s/%d/%2\$d/g" app/src/*/res/values*/*strings.xml
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+
+      - name: Build forkRelease variant of app
+        env:
+          GRADLE_OPTS: -Dorg.gradle.jvmargs="-XX:MaxMetaspaceSize=4g -Xms1g -Xmx7g -XX:+HeapDumpOnOutOfMemoryError -XX:HeapDumpPath=/dev/stderr"
+        run: |
+          /usr/bin/time -v ./gradlew app:assembleForkRelease -PversionName=${{ env.VERSION_NAME }} --stacktrace --no-daemon
+
+      - name: List built APKs
+        run: ls -alh gradle/build/app/outputs/apk/forkRelease/
+
+      - name: Sign APKs
+        env:
+          KS_B64: ${{ secrets.CRIMSON_KEYSTORE_B64 }}
+          KS_ALIAS: ${{ secrets.CRIMSON_KEY_ALIAS }}
+          KS_PASS: ${{ secrets.CRIMSON_KEY_PASSWORD }}
+        run: |
+          set -e
+          APKSIGNER=$(find "${ANDROID_HOME:-$ANDROID_SDK_ROOT}/build-tools" -name apksigner | sort -V | tail -n 1)
+          echo "Using $APKSIGNER"
+          if [ -n "$KS_B64" ]; then
+            echo "Using your saved signing key"
+            echo "$KS_B64" | base64 -d > ks.jks
+            ALIAS="$KS_ALIAS"
+            PASS="$KS_PASS"
+          else
+            echo "No saved key found. Making a temporary one (updates will need an uninstall first)."
+            ALIAS=crimson
+            PASS=crimson-temp-key
+            keytool -genkeypair -keystore ks.jks -alias "$ALIAS" -keyalg RSA -keysize 2048 -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=Crimson"
+          fi
+          mkdir -p signed
+          for apk in gradle/build/app/outputs/apk/forkRelease/*.apk; do
+            name=$(basename "$apk" | sed "s/-unsigned//")
+            cp "$apk" "signed/$name"
+            "$APKSIGNER" sign --ks ks.jks --ks-key-alias "$ALIAS" --ks-pass "pass:$PASS" --key-pass "pass:$PASS" "signed/$name"
+          done
+          ls -alh signed
+
+      - name: Upload APKs
+        uses: actions/upload-artifact@v7
+        with:
+          name: ${{ env.VERSION_NAME }}-apks
+          path: signed/*.apk
