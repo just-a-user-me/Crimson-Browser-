@@ -1,0 +1,23 @@
+{
+  "manifest_version": 2,
+  "name": "Crimson Tools",
+  "version": "1.0",
+  "description": "Dark mode for websites and in-page developer tools for Crimson.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "crimson-tools@crimson.app"
+    }
+  },
+  "permissions": ["nativeMessaging", "storage", "<all_urls>"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start"
+    }
+  ],
+  "web_accessible_resources": ["eruda.js", "eruda-init.js", "eruda-destroy.js"]
+}
