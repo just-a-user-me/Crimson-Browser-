@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="crimson_category_title" translatable="false">Crimson</string>
+    <string name="crimson_accent_title" translatable="false">Accent color</string>
+    <string name="crimson_splash_title" translatable="false">Startup animation</string>
+    <string name="crimson_splash_summary" translatable="false">Play the logo animation when the app opens. Tap to skip.</string>
+    <string name="crimson_force_dark_title" translatable="false">Dark mode for websites</string>
+    <string name="crimson_force_dark_summary" translatable="false">Darken every website, even ones without a dark theme. Sites that are already dark are left alone.</string>
+    <string name="crimson_dev_title" translatable="false">Developer panel</string>
+    <string name="crimson_dev_summary" translatable="false">Shows a console, element inspector, network and storage panel inside web pages.</string>
+</resources>
