@@ -35,32 +35,54 @@ jobs:
           "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -3
           exit 0
 
-      - name: Resolve latest GeckoView version
+      - name: Resolve latest compatible versions
         run: |
           set -e
-          curl -fsSL https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview-arm64-v8a/maven-metadata.xml -o meta.xml
-          python3 - <<'PYEOF'
-          import os, re
-          xml = open("meta.xml").read()
-          versions = re.findall(r"<version>([^<]+)</version>", xml)
-          good = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v)]
-          best = max(good, key=lambda v: tuple(int(x) for x in v.split(".")))
-          print("GeckoView", best)
+          python3 - <<'PYEOF2'
+          import json, os, re, urllib.request
+
+          def get(url):
+              return urllib.request.urlopen(url, timeout=90).read().decode()
+
+          def versions(url):
+              return re.findall(r"<version>([^<]+)</version>", get(url))
+
+          def newest(vs, pattern):
+              good = [v for v in vs if re.fullmatch(pattern, v)]
+              return max(good, key=lambda v: tuple(int(x) for x in v.split(".")))
+
+          G = "https://dl.google.com/dl/android/maven2/"
+          M = "https://repo1.maven.org/maven2/"
+          stable = r"\d+\.\d+\.\d+"
+          props = {
+              "geckoVersion": newest(versions("https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview-arm64-v8a/maven-metadata.xml"), stable),
+              "agpVersion": newest(versions(G + "com/android/tools/build/gradle/maven-metadata.xml"), r"9\.1\.\d+"),
+              "kotlinVersion": newest(versions(M + "org/jetbrains/kotlin/kotlin-gradle-plugin/maven-metadata.xml"), stable),
+              "composeBomVersion": newest(versions(G + "androidx/compose/compose-bom/maven-metadata.xml"), stable),
+              "activityComposeVersion": newest(versions(G + "androidx/activity/activity-compose/maven-metadata.xml"), stable),
+              "coreKtxVersion": newest(versions(G + "androidx/core/core-ktx/maven-metadata.xml"), stable),
+          }
+          gradle = json.loads(get("https://services.gradle.org/versions/current"))["version"]
+          with open("gradle.properties", "a") as f:
+              for k, v in props.items():
+                  f.write("%s=%s\n" % (k, v))
           with open(os.environ["GITHUB_ENV"], "a") as env:
-              env.write("GECKO_VERSION=%s\n" % best)
+              env.write("GRADLE_VERSION=%s\n" % gradle)
+              env.write("GECKO_VERSION=%s\n" % props["geckoVersion"])
           with open("build.log", "a") as log:
-              log.write("GeckoView %s\n" % best)
-          PYEOF
+              log.write("versions: %s gradle=%s\n" % (json.dumps(props), gradle))
+          print(props, gradle)
+          PYEOF2
 
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:
-          gradle-version: 8.10.2
+          gradle-version: ${{ env.GRADLE_VERSION }}
 
       - name: Build release APK
         run: |
           set -o pipefail
-          gradle :app:assembleRelease -PgeckoVersion="$GECKO_VERSION" --no-daemon --stacktrace 2>&1 | tee -a build.log
+          gradle :app:assembleRelease --no-daemon --stacktrace 2>&1 | tee -a build.log
 
       - name: Sign APK
         run: |
