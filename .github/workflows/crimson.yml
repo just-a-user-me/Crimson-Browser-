@@ -1,0 +1,105 @@
+name: Crimson build
+
+on:
+  push:
+    branches:
+      - crimson
+  workflow_dispatch:
+
+concurrency:
+  group: crimson-build
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build APK
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v7
+
+      - name: Setup Java
+        uses: actions/setup-java@v5
+        with:
+          java-version: 17
+          distribution: temurin
+
+      - name: Android SDK licenses and platform
+        run: |
+          set +e
+          yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null 2>&1
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" "platforms;android-35" "build-tools;35.0.0" 2>&1 | tail -3
+          exit 0
+
+      - name: Resolve latest GeckoView version
+        run: |
+          set -e
+          curl -fsSL https://maven.mozilla.org/maven2/org/mozilla/geckoview/geckoview-arm64-v8a/maven-metadata.xml -o meta.xml
+          python3 - <<'PYEOF'
+          import os, re
+          xml = open("meta.xml").read()
+          versions = re.findall(r"<version>([^<]+)</version>", xml)
+          good = [v for v in versions if re.fullmatch(r"\d+\.\d+\.\d+", v)]
+          best = max(good, key=lambda v: tuple(int(x) for x in v.split(".")))
+          print("GeckoView", best)
+          with open(os.environ["GITHUB_ENV"], "a") as env:
+              env.write("GECKO_VERSION=%s\n" % best)
+          with open("build.log", "a") as log:
+              log.write("GeckoView %s\n" % best)
+          PYEOF
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v6
+        with:
+          gradle-version: 8.10.2
+
+      - name: Build release APK
+        run: |
+          set -o pipefail
+          gradle :app:assembleRelease -PgeckoVersion="$GECKO_VERSION" --no-daemon --stacktrace 2>&1 | tee -a build.log
+
+      - name: Sign APK
+        run: |
+          set -e
+          APKSIGNER=$(find "${ANDROID_HOME}/build-tools" -name apksigner | sort -V | tail -n 1)
+          keytool -genkeypair -keystore ks.jks -alias crimson -keyalg RSA -keysize 2048 -validity 10000 -storepass crimson-temp -keypass crimson-temp -dname "CN=Crimson"
+          mkdir -p signed
+          for apk in app/build/outputs/apk/release/*.apk; do
+            name=$(basename "$apk" | sed 's/-unsigned//')
+            cp "$apk" "signed/$name"
+            "$APKSIGNER" sign --ks ks.jks --ks-key-alias crimson --ks-pass pass:crimson-temp --key-pass pass:crimson-temp "signed/$name"
+          done
+          ls -alh signed
+
+      - name: Upload APK
+        uses: actions/upload-artifact@v7
+        with:
+          name: crimson-arm64
+          path: signed/*.apk
+
+      - name: Publish build log
+        if: always()
+        run: |
+          set +e
+          mkdir -p /tmp/logpub
+          cd /tmp/logpub
+          git init -q -b build-logs
+          {
+            echo "status: ${{ job.status }}"
+            echo "run: ${GITHUB_RUN_ID}"
+            echo "commit: ${GITHUB_SHA}"
+            echo "gecko: ${GECKO_VERSION}"
+          } > status.txt
+          if [ -f "$GITHUB_WORKSPACE/build.log" ]; then
+            tail -n 300 "$GITHUB_WORKSPACE/build.log" > tail.txt
+            grep -nE "^e: |error:|FAILED|What went wrong|Could not|Unresolved|Execution failed" -A4 "$GITHUB_WORKSPACE/build.log" | head -200 > errors.txt
+          fi
+          git config user.name "crimson-ci"
+          git config user.email "ci@crimson.invalid"
+          git add -A
+          git commit -qm "build log ${GITHUB_RUN_ID}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" build-logs
