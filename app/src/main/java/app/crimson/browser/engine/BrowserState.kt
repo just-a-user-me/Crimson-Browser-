@@ -437,7 +437,7 @@ class BrowserState(
             val result = GeckoResult<GeckoSession.PromptDelegate.PromptResponse>()
             showPrompt(
                 UiPrompt.Alert(prompt.title ?: "Message", prompt.message ?: "") {
-                    result.complete(prompt.confirm())
+                    result.complete(prompt.dismiss())
                 },
             )
             return result
@@ -548,7 +548,6 @@ class BrowserState(
         GeckoSession.PermissionDelegate.PERMISSION_GEOLOCATION -> "know your location"
         GeckoSession.PermissionDelegate.PERMISSION_DESKTOP_NOTIFICATION -> "show notifications"
         GeckoSession.PermissionDelegate.PERMISSION_PERSISTENT_STORAGE -> "store data on your device"
-        GeckoSession.PermissionDelegate.PERMISSION_CLIPBOARD_READ -> "read your clipboard"
         GeckoSession.PermissionDelegate.PERMISSION_STORAGE_ACCESS -> "use your cookies across sites"
         GeckoSession.PermissionDelegate.PERMISSION_XR -> "use virtual or augmented reality"
         GeckoSession.PermissionDelegate.PERMISSION_LOCAL_NETWORK_ACCESS -> "access devices on your network"
