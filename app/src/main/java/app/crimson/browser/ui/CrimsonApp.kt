@@ -1,432 +1,333 @@
 package app.crimson.browser.ui
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import androidx.activity.compose.BackHandler
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Switch
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
-import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.viewinterop.AndroidView
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import app.crimson.browser.engine.BrowserState
-import app.crimson.browser.engine.Tab
-import org.mozilla.geckoview.GeckoView
+import app.crimson.browser.engine.UiPrompt
 
-private enum class Panel { None, Menu, Tabs }
+enum class Screen {
+    Browser, Tabs, Settings, Appearance, PrivacyGuard, Trackers, Https, Fingerprint, Scripts, Cookies,
+    Redirects, SiteSettings, PrivacyAdvanced, Search, Downloads, History, Bookmarks, Addons, About,
+}
+
+private fun Context.findActivity(): Activity? {
+    var c: Context? = this
+    while (c is ContextWrapper) {
+        if (c is Activity) return c
+        c = c.baseContext
+    }
+    return null
+}
 
 @Composable
-fun CrimsonApp(browser: BrowserState) {
-    val context = LocalContext.current
-    var paletteIndex by remember { mutableIntStateOf(Prefs.paletteIndex(context)) }
-    var splashOn by remember { mutableStateOf(Prefs.splash(context)) }
-    var showSplash by remember { mutableStateOf(Prefs.splash(context)) }
-    var panel by remember { mutableStateOf(Panel.None) }
-    val accent = Palette.accent(paletteIndex)
+fun CrimsonApp(browser: BrowserState, onQuit: () -> Unit) {
+    val settings = browser.settings
+    var screen by remember { mutableStateOf(Screen.Browser) }
+    val backStack = remember { mutableStateListOf<Screen>() }
+    var menuOpen by remember { mutableStateOf(false) }
+    var mediaOpen by remember { mutableStateOf(false) }
+    var findOpen by remember { mutableStateOf(false) }
+    var showSplash by remember { mutableStateOf(settings.splash.value) }
 
-    CrimsonTheme(accent) {
-        val tab = browser.current
+    fun go(to: Screen) {
+        menuOpen = false
+        backStack.add(screen)
+        screen = to
+    }
 
-        BackHandler(enabled = panel == Panel.None && tab?.canGoBack == true) {
-            tab?.session?.goBack()
+    fun back() {
+        screen = if (backStack.isEmpty()) Screen.Browser else backStack.removeAt(backStack.lastIndex)
+    }
+
+    fun toBrowser() {
+        backStack.clear()
+        screen = Screen.Browser
+    }
+
+    fun openInBrowser(url: String) {
+        toBrowser()
+        browser.open(url)
+    }
+
+    CrimsonTheme(settings.accent.value, settings.themeMode.value, settings.cornerScale.value, settings.uiScale.value) {
+        val c = LocalCrimson.current
+        val view = LocalView.current
+
+        LaunchedEffect(c.isLight, browser.fullscreen) {
+            val window = view.context.findActivity()?.window ?: return@LaunchedEffect
+            val controller = WindowCompat.getInsetsController(window, view)
+            controller.isAppearanceLightStatusBars = c.isLight
+            controller.isAppearanceLightNavigationBars = c.isLight
+            if (browser.fullscreen) {
+                controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                controller.hide(WindowInsetsCompat.Type.systemBars())
+            } else {
+                controller.show(WindowInsetsCompat.Type.systemBars())
+            }
         }
-        BackHandler(enabled = panel != Panel.None) { panel = Panel.None }
 
-        Box(
-            Modifier
-                .fillMaxSize()
-                .background(MaterialTheme.colorScheme.background),
-        ) {
-            Column(Modifier.fillMaxSize()) {
-                Box(
-                    Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .statusBarsPadding(),
-                ) {
-                    if (tab != null) {
-                        GeckoViewHost(tab, Modifier.fillMaxSize())
-                        if (tab.url.isEmpty()) {
-                            StartPage(accent, Modifier.fillMaxSize())
-                        }
-                    }
-                }
-                if (tab != null) {
-                    BottomBar(
-                        tab = tab,
-                        tabCount = browser.tabs.size,
-                        accent = accent,
-                        onTabs = { panel = Panel.Tabs },
-                        onMenu = { panel = Panel.Menu },
-                        onSubmit = { browser.open(it) },
-                    )
-                }
-            }
+        BackHandler(enabled = screen == Screen.Browser && browser.current?.canGoBack == true) {
+            browser.current?.session?.goBack()
+        }
+        BackHandler(enabled = screen == Screen.Browser && findOpen) { findOpen = false }
+        BackHandler(enabled = browser.fullscreen) { browser.current?.session?.exitFullScreen() }
+        BackHandler(enabled = screen != Screen.Browser) { back() }
+        BackHandler(enabled = mediaOpen) { mediaOpen = false }
+        BackHandler(enabled = menuOpen) { menuOpen = false }
+        BackHandler(enabled = browser.contextMenu != null) { browser.contextMenu = null }
 
-            if (panel != Panel.None) {
-                Box(
-                    Modifier
-                        .fillMaxSize()
-                        .background(Color.Black.copy(alpha = 0.55f))
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                        ) { panel = Panel.None },
+        Box(Modifier.fillMaxSize().background(c.bg)) {
+            when (screen) {
+                Screen.Browser -> BrowserScreen(
+                    browser = browser,
+                    settings = settings,
+                    findOpen = findOpen,
+                    onCloseFind = { findOpen = false },
+                    onTabs = {
+                        browser.current?.let { browser.captureThumbnail(it) }
+                        go(Screen.Tabs)
+                    },
+                    onMenu = { menuOpen = true },
+                    onShowMedia = { mediaOpen = true },
                 )
-                Box(Modifier.align(Alignment.BottomCenter)) {
-                    when (panel) {
-                        Panel.Menu -> MenuSheet(
-                            paletteIndex = paletteIndex,
-                            splashOn = splashOn,
-                            onPick = {
-                                paletteIndex = it
-                                Prefs.setPaletteIndex(context, it)
-                            },
-                            onSplash = {
-                                splashOn = it
-                                Prefs.setSplash(context, it)
-                            },
-                            onNewTab = {
-                                browser.newTab()
-                                panel = Panel.None
-                            },
-                            onReload = {
-                                browser.current?.session?.reload()
-                                panel = Panel.None
-                            },
-                        )
-                        Panel.Tabs -> TabsSheet(
-                            browser = browser,
-                            onClose = { panel = Panel.None },
-                        )
-                        Panel.None -> {}
-                    }
+                Screen.Tabs -> TabSwitcher(browser, onClose = { back() }, onPickTab = { toBrowser() })
+                Screen.Settings -> SettingsRoot(browser, settings, { back() }) { go(it) }
+                Screen.Appearance -> AppearanceScreen(browser, settings) { back() }
+                Screen.PrivacyGuard -> PrivacyGuardScreen(browser, settings, { back() }) { go(it) }
+                Screen.Trackers -> TrackersScreen(browser, settings, { back() }) { go(it) }
+                Screen.Https -> HttpsScreen(browser, settings) { back() }
+                Screen.Fingerprint -> FingerprintScreen(browser, settings) { back() }
+                Screen.Scripts -> ScriptsScreen(browser, settings) { back() }
+                Screen.Cookies -> CookiesScreen(browser, settings) { back() }
+                Screen.Redirects -> RedirectsScreen(settings) { back() }
+                Screen.SiteSettings -> SiteSettingsScreen(browser) { back() }
+                Screen.PrivacyAdvanced -> PrivacyAdvancedScreen(browser, settings) { back() }
+                Screen.Search -> SearchScreen(settings) { back() }
+                Screen.Downloads -> DownloadsScreen(browser) { back() }
+                Screen.History -> HistoryScreen(browser, { back() }) { openInBrowser(it) }
+                Screen.Bookmarks -> BookmarksScreen(browser, { back() }) { openInBrowser(it) }
+                Screen.Addons -> AddonsScreen(browser, { back() }) { openInBrowser(it) }
+                Screen.About -> AboutScreen { back() }
+            }
+
+            if (menuOpen) {
+                MenuSheet(
+                    browser = browser,
+                    settings = settings,
+                    onDismiss = { menuOpen = false },
+                    onNavigate = { go(it) },
+                    onFind = { findOpen = true },
+                    onQuit = {
+                        menuOpen = false
+                        onQuit()
+                    },
+                )
+            }
+
+            if (mediaOpen) {
+                val tab = browser.current
+                val items = if (tab != null) browser.media.itemsFor(tab.url) else emptyList()
+                if (items.isEmpty()) {
+                    mediaOpen = false
+                } else {
+                    MediaSheet(browser, items, tab?.url ?: "") { mediaOpen = false }
                 }
             }
+
+            browser.contextMenu?.let { info ->
+                ContextSheet(browser, info) { browser.contextMenu = null }
+            }
+
+            PromptHost(browser)
 
             if (showSplash) {
-                CrimsonSplash(accent) { showSplash = false }
+                CrimsonSplash(
+                    accent = settings.accent.value.let { readableAccent(Color(it), false) },
+                    backdrop = Color(0xFF0A0B10),
+                ) { showSplash = false }
             }
         }
     }
 }
 
 @Composable
-private fun GeckoViewHost(tab: Tab, modifier: Modifier = Modifier) {
-    AndroidView(
-        modifier = modifier,
-        factory = { ctx -> GeckoView(ctx) },
-        update = { view ->
-            if (view.session !== tab.session) {
-                view.releaseSession()
-                view.setSession(tab.session)
-            }
-        },
-    )
-}
+private fun PromptHost(browser: BrowserState) {
+    val c = LocalCrimson.current
+    val prompt = browser.prompt ?: return
 
-@Composable
-private fun StartPage(accent: Color, modifier: Modifier = Modifier) {
-    Column(
-        modifier = modifier.background(MaterialTheme.colorScheme.background),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center,
-    ) {
-        CrimsonLogo(accent, Modifier.size(120.dp))
-        Spacer(Modifier.height(20.dp))
-        Text(
-            "Crimson",
-            fontSize = 30.sp,
-            fontWeight = FontWeight.SemiBold,
-            color = MaterialTheme.colorScheme.onBackground,
-        )
-        Spacer(Modifier.height(6.dp))
-        Text(
-            "Search or type an address below",
-            fontSize = 14.sp,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-    }
-}
-
-private fun displayUrl(url: String): String =
-    url.removePrefix("https://").removePrefix("http://").removePrefix("www.").trimEnd('/')
-
-@Composable
-private fun BottomBar(
-    tab: Tab,
-    tabCount: Int,
-    accent: Color,
-    onTabs: () -> Unit,
-    onMenu: () -> Unit,
-    onSubmit: (String) -> Unit,
-) {
-    var text by remember(tab.id) { mutableStateOf(displayUrl(tab.url)) }
-    var focused by remember { mutableStateOf(false) }
-    val focusManager = LocalFocusManager.current
-
-    LaunchedEffect(tab.id, tab.url, focused) {
-        if (!focused) text = displayUrl(tab.url)
-    }
-
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .background(MaterialTheme.colorScheme.surface)
-            .navigationBarsPadding()
-            .imePadding(),
-    ) {
-        if (tab.loading) {
-            LinearProgressIndicator(
-                progress = { tab.progress / 100f },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(2.dp),
-                color = accent,
-                trackColor = Color.Transparent,
-            )
-        } else {
-            Spacer(Modifier.height(2.dp))
-        }
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp, vertical = 6.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            BarButton("\u2039", enabled = tab.canGoBack) { tab.session.goBack() }
-            Box(
-                Modifier
-                    .weight(1f)
-                    .height(44.dp)
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(MaterialTheme.colorScheme.surfaceVariant)
-                    .padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterStart,
-            ) {
-                if (text.isEmpty() && !focused) {
-                    Text(
-                        "Search or type address",
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        fontSize = 15.sp,
-                    )
-                }
-                BasicTextField(
-                    value = text,
-                    onValueChange = { text = it },
-                    singleLine = true,
-                    textStyle = TextStyle(color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp),
-                    cursorBrush = SolidColor(accent),
-                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Go, keyboardType = KeyboardType.Uri),
-                    keyboardActions = KeyboardActions(onGo = {
-                        onSubmit(text)
-                        focusManager.clearFocus()
-                    }),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .onFocusChanged { focused = it.isFocused },
-                )
-            }
-            Spacer(Modifier.width(4.dp))
-            BarButton(tabCount.toString(), enabled = true, onClick = onTabs)
-            BarButton("\u22EE", enabled = true, onClick = onMenu)
-        }
-    }
-}
-
-@Composable
-private fun BarButton(label: String, enabled: Boolean, onClick: () -> Unit) {
-    Box(
-        Modifier
-            .size(44.dp)
-            .clip(CircleShape)
-            .clickable(enabled = enabled, onClick = onClick),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(
-            label,
-            fontSize = 22.sp,
-            color = if (enabled) {
-                MaterialTheme.colorScheme.onSurface
-            } else {
-                MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f)
+    when (prompt) {
+        is UiPrompt.Alert -> AlertDialog(
+            onDismissRequest = {
+                browser.prompt = null
+                prompt.onClose()
+            },
+            containerColor = c.surface,
+            title = { Text(prompt.title, color = c.onSurface) },
+            text = { if (prompt.message.isNotBlank()) Text(prompt.message, color = c.muted) },
+            confirmButton = {
+                TextButton(onClick = {
+                    browser.prompt = null
+                    prompt.onClose()
+                }) { Text("OK", color = c.accent) }
             },
         )
-    }
-}
 
-@Composable
-private fun Sheet(content: @Composable ColumnScope.() -> Unit) {
-    Column(
-        Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .navigationBarsPadding()
-            .padding(20.dp),
-        content = content,
-    )
-}
+        is UiPrompt.Confirm -> AlertDialog(
+            onDismissRequest = {
+                browser.prompt = null
+                prompt.onResult(false)
+            },
+            containerColor = c.surface,
+            title = { Text(prompt.title, color = c.onSurface) },
+            text = { if (prompt.message.isNotBlank()) Text(prompt.message, color = c.muted) },
+            confirmButton = {
+                TextButton(onClick = {
+                    browser.prompt = null
+                    prompt.onResult(true)
+                }) { Text(prompt.yes, color = c.accent) }
+            },
+            dismissButton = {
+                TextButton(onClick = {
+                    browser.prompt = null
+                    prompt.onResult(false)
+                }) { Text(prompt.no, color = c.muted) }
+            },
+        )
 
-@Composable
-private fun ActionButton(text: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surfaceVariant)
-            .clickable(onClick = onClick)
-            .padding(horizontal = 18.dp, vertical = 14.dp),
-        contentAlignment = Alignment.Center,
-    ) {
-        Text(text, color = MaterialTheme.colorScheme.onSurface, fontSize = 15.sp)
-    }
-}
-
-@Composable
-private fun Swatch(index: Int, selected: Boolean, modifier: Modifier = Modifier, onClick: () -> Unit) {
-    Box(
-        modifier
-            .padding(4.dp)
-            .aspectRatio(1f)
-            .clip(CircleShape)
-            .background(Palette.accent(index))
-            .then(if (selected) Modifier.border(BorderStroke(3.dp, Color.White), CircleShape) else Modifier)
-            .clickable(onClick = onClick),
-    )
-}
-
-@Composable
-private fun MenuSheet(
-    paletteIndex: Int,
-    splashOn: Boolean,
-    onPick: (Int) -> Unit,
-    onSplash: (Boolean) -> Unit,
-    onNewTab: () -> Unit,
-    onReload: () -> Unit,
-) {
-    Sheet {
-        Text("Crimson", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(16.dp))
-        Text("Theme color", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Spacer(Modifier.height(8.dp))
-        for (row in 0 until 2) {
-            Row(Modifier.fillMaxWidth()) {
-                for (col in 0 until 8) {
-                    val index = row * 8 + col
-                    Swatch(index, index == paletteIndex, Modifier.weight(1f)) { onPick(index) }
-                }
-            }
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(
-            Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
-        ) {
-            Text("Startup animation", fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface)
-            Switch(checked = splashOn, onCheckedChange = onSplash)
-        }
-        Spacer(Modifier.height(12.dp))
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            ActionButton("New tab", Modifier.weight(1f), onNewTab)
-            ActionButton("Reload", Modifier.weight(1f), onReload)
-        }
-    }
-}
-
-@Composable
-private fun TabsSheet(browser: BrowserState, onClose: () -> Unit) {
-    Sheet {
-        Text("Tabs", fontSize = 20.sp, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-        Spacer(Modifier.height(12.dp))
-        browser.tabs.forEachIndexed { index, tab ->
-            val selected = index == browser.currentIndex
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(vertical = 4.dp)
-                    .clip(RoundedCornerShape(16.dp))
-                    .background(
-                        if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                    )
-                    .clickable {
-                        browser.select(index)
-                        onClose()
+        is UiPrompt.Text -> {
+            var text by remember(prompt) { mutableStateOf(prompt.initial) }
+            AlertDialog(
+                onDismissRequest = {
+                    browser.prompt = null
+                    prompt.onResult(null)
+                },
+                containerColor = c.surface,
+                title = { Text(prompt.title, color = c.onSurface) },
+                text = {
+                    Column {
+                        if (prompt.message.isNotBlank()) Text(prompt.message, color = c.muted)
+                        Box(
+                            Modifier
+                                .padding(top = 12.dp)
+                                .fillMaxWidth()
+                                .clip(RoundedCornerShape(c.r(14)))
+                                .background(c.surfaceHigh)
+                                .padding(12.dp),
+                        ) {
+                            BasicTextField(
+                                value = text,
+                                onValueChange = { text = it },
+                                textStyle = TextStyle(color = c.onSurface, fontSize = 15.sp),
+                                cursorBrush = SolidColor(c.accent),
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
                     }
-                    .padding(start = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Column(Modifier.weight(1f).padding(vertical = 12.dp)) {
-                    Text(
-                        if (tab.title.isNotEmpty()) tab.title else "New tab",
-                        color = MaterialTheme.colorScheme.onSurface,
-                        fontSize = 15.sp,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (tab.url.isNotEmpty()) {
-                        Text(
-                            displayUrl(tab.url),
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                        )
-                    }
-                }
-                BarButton("\u00D7", enabled = true) { browser.close(index) }
-            }
+                },
+                confirmButton = {
+                    TextButton(onClick = {
+                        browser.prompt = null
+                        prompt.onResult(text)
+                    }) { Text("OK", color = c.accent) }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        browser.prompt = null
+                        prompt.onResult(null)
+                    }) { Text("Cancel", color = c.muted) }
+                },
+            )
         }
-        Spacer(Modifier.height(8.dp))
-        ActionButton("New tab", Modifier.fillMaxWidth()) {
-            browser.newTab()
-            onClose()
+
+        is UiPrompt.Choice -> {
+            val selected = remember(prompt) { mutableStateListOf<String>() }
+            AlertDialog(
+                onDismissRequest = {
+                    browser.prompt = null
+                    prompt.onResult(null)
+                },
+                containerColor = c.surface,
+                title = { Text(prompt.title.ifBlank { "Choose" }, color = c.onSurface) },
+                text = {
+                    Column(Modifier.verticalScroll(rememberScrollState())) {
+                        if (prompt.message.isNotBlank()) Text(prompt.message, color = c.muted, modifier = Modifier.padding(bottom = 8.dp))
+                        prompt.labels.forEachIndexed { i, label ->
+                            val id = prompt.ids[i]
+                            val isOn = selected.contains(id)
+                            Row(
+                                Modifier
+                                    .fillMaxWidth()
+                                    .clip(RoundedCornerShape(c.r(12)))
+                                    .clickable {
+                                        if (prompt.multiple) {
+                                            if (isOn) selected.remove(id) else selected.add(id)
+                                        } else {
+                                            browser.prompt = null
+                                            prompt.onResult(listOf(id))
+                                        }
+                                    }
+                                    .padding(vertical = 12.dp, horizontal = 8.dp),
+                            ) {
+                                Text(
+                                    (if (prompt.multiple) (if (isOn) "\u2611  " else "\u2610  ") else "") + label,
+                                    color = if (isOn) c.accent else c.onSurface,
+                                    fontSize = 15.sp,
+                                )
+                            }
+                        }
+                    }
+                },
+                confirmButton = {
+                    if (prompt.multiple) {
+                        TextButton(onClick = {
+                            browser.prompt = null
+                            prompt.onResult(selected.toList())
+                        }) { Text("OK", color = c.accent) }
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = {
+                        browser.prompt = null
+                        prompt.onResult(null)
+                    }) { Text("Cancel", color = c.muted) }
+                },
+            )
         }
     }
 }

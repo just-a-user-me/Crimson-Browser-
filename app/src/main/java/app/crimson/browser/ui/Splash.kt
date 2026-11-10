@@ -32,15 +32,15 @@ private val FallEasing = Easing { fraction -> fraction * fraction }
 private val BounceUpEasing = Easing { fraction -> 1f - (1f - fraction) * (1f - fraction) }
 
 /**
- * Startup animation (about 1.2 seconds), starting the moment the app opens:
+ * Startup animation (about 1.2 seconds) that starts the moment the app opens:
  * the C and the dot are on screen with the dot inside; the dot falls onto the lower part of the C;
  * the C vanishes smoothly from the top down; when the bottom is gone the dot falls away
- * and the app shows. Tap to skip.
+ * and the app shows. Uses the app's accent color. Tap to skip.
  */
 @Composable
-fun CrimsonSplash(accent: Color, onFinished: () -> Unit) {
-    val light = Palette.gradientLight(accent)
-    val dark = Palette.gradientDark(accent)
+fun CrimsonSplash(accent: Color, backdrop: Color, onFinished: () -> Unit) {
+    val light = gradientLight(accent)
+    val dark = gradientDark(accent)
 
     val dotRest = remember { Animatable(0f) }
     val vanish = remember { Animatable(0f) }
@@ -57,7 +57,7 @@ fun CrimsonSplash(accent: Color, onFinished: () -> Unit) {
     }
 
     LaunchedEffect(Unit) {
-        delay(120)
+        delay(100)
         dotRest.animateTo(1f, tween(260, easing = FallEasing))
         dotRest.animateTo(0.94f, tween(70, easing = BounceUpEasing))
         dotRest.animateTo(1f, tween(70, easing = FallEasing))
@@ -74,7 +74,7 @@ fun CrimsonSplash(accent: Color, onFinished: () -> Unit) {
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color(0xFF0A0B10).copy(alpha = backdropAlpha.value))
+            .background(backdrop.copy(alpha = backdropAlpha.value))
             .pointerInput(Unit) {
                 detectTapGestures {
                     scope.launch {

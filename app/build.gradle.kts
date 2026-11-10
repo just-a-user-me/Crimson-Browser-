@@ -54,4 +54,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.activity:activity-compose:${versionOf("activityComposeVersion", "1.11.0")}")
     implementation("androidx.core:core-ktx:${versionOf("coreKtxVersion", "1.17.0")}")
+    implementation("androidx.compose.material:material-icons-core")
+    implementation("info.guardianproject:tor-android:0.4.9.13.2")
+    implementation("info.guardianproject:jtorctl:0.4.5.7")
 }

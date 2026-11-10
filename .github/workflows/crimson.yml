@@ -74,6 +74,15 @@ jobs:
           print(props, gradle)
           PYEOF2
 
+      - name: Fetch the developer panel library
+        run: |
+          set -e
+          mkdir -p /tmp/eruda
+          cd /tmp/eruda
+          npm pack eruda@3.4.3 > /dev/null
+          tar xzf eruda-*.tgz
+          cp package/eruda.js "$GITHUB_WORKSPACE/app/src/main/assets/extensions/crimson/eruda.js"
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v6
         with:

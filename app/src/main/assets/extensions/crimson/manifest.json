@@ -1,0 +1,24 @@
+{
+  "manifest_version": 2,
+  "name": "Crimson",
+  "version": "1.0",
+  "description": "Video detection, dark mode for websites and the developer panel for Crimson.",
+  "browser_specific_settings": {
+    "gecko": {
+      "id": "crimson@crimson.app"
+    }
+  },
+  "permissions": ["nativeMessaging", "storage", "webRequest", "<all_urls>"],
+  "background": {
+    "scripts": ["background.js"]
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    }
+  ],
+  "web_accessible_resources": ["eruda.js", "eruda-init.js", "eruda-destroy.js"]
+}

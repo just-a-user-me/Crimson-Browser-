@@ -1,8 +1,8 @@
 package app.crimson.browser.ui
 
 import androidx.compose.foundation.Canvas
-import androidx.compose.ui.Modifier
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
@@ -10,11 +10,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.drawscope.Stroke
 
-/** The Crimson mark: an open ring (a C) with a dot inside, with a gradient made from the accent. */
+/** The Crimson mark: an open ring (a C) with a dot inside, gradient built from the accent. */
 @Composable
 fun CrimsonLogo(accent: Color, modifier: Modifier = Modifier) {
-    val light = Palette.gradientLight(accent)
-    val dark = Palette.gradientDark(accent)
+    val light = gradientLight(accent)
+    val dark = gradientDark(accent)
     Canvas(modifier = modifier) {
         val k = size.minDimension / 56f
         val cx = size.width / 2f
