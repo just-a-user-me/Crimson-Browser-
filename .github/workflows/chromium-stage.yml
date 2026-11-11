@@ -1,0 +1,244 @@
+name: Chromium build stage
+
+on:
+  workflow_call:
+    inputs:
+      stage:
+        required: true
+        type: number
+    outputs:
+      done:
+        value: ${{ jobs.build.outputs.done }}
+
+env:
+  # Chromium commit and Bare patch series that match each other.
+  CHROMIUM_COMMIT: 800628ad1ca1fd0c51e3b43b5b2bca081e81c3f6
+  BARE_COMMIT: 9a20cee0014f49479764aaff05597f0fe3dd1e96
+  STAGE: ${{ inputs.stage }}
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+    outputs:
+      done: ${{ steps.result.outputs.done }}
+    steps:
+      - name: Record start time
+        run: echo "START=$(date +%s)" >> $GITHUB_ENV
+
+      - name: Make room for the build
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 6144
+          temp-reserve-mb: 1024
+          swap-size-mb: 8192
+          remove-dotnet: "true"
+          remove-android: "true"
+          remove-haskell: "true"
+          remove-codeql: "true"
+          remove-docker-images: "true"
+
+      - name: Checkout Crimson files
+        uses: actions/checkout@v7
+
+      - name: Show space
+        run: df -h / /home/runner/work && free -h && nproc
+
+      - name: Get depot_tools and the Bare patches
+        run: |
+          set -e
+          cd /home/runner/work
+          git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
+          git clone https://github.com/BareBrowser/bare-browser.git bare
+          git -C bare checkout "$BARE_COMMIT"
+          echo "/home/runner/work/depot_tools" >> $GITHUB_PATH
+
+      - name: Fetch Chromium source
+        run: |
+          set -e
+          export PATH="/home/runner/work/depot_tools:$PATH"
+          export DEPOT_TOOLS_UPDATE=0
+          mkdir -p /home/runner/work/chromium
+          cd /home/runner/work/chromium
+          cat > .gclient <<'GCLIENT'
+          solutions = [
+            {
+              "name": "src",
+              "url": "https://chromium.googlesource.com/chromium/src.git",
+              "managed": False,
+              "custom_deps": {},
+              "custom_vars": {},
+            },
+          ]
+          target_os = ["android"]
+          GCLIENT
+          git init -q src
+          cd src
+          git remote add origin https://chromium.googlesource.com/chromium/src.git
+          git fetch --depth 1 origin "$CHROMIUM_COMMIT"
+          git checkout -q FETCH_HEAD
+          cd ..
+          gclient sync --no-history --nohooks -D --force --reset -j8
+          echo "source fetched"
+
+      - name: Install build dependencies and run hooks
+        run: |
+          set -e
+          export PATH="/home/runner/work/depot_tools:$PATH"
+          export DEPOT_TOOLS_UPDATE=0
+          cd /home/runner/work/chromium/src
+          sudo ./build/install-build-deps.sh --android --no-prompt --no-chromeos-fonts
+          gclient runhooks
+
+      - name: Apply the patch series
+        run: |
+          set -e
+          cd /home/runner/work/chromium/src
+          git config user.email "ci@crimson.invalid"
+          git config user.name "crimson-ci"
+          git apply --index /home/runner/work/bare/patches/*.patch
+          mkdir -p chrome/browser/resources/bare
+          cp /home/runner/work/bare/third_party/ublock_origin/uBlockOrigin-1.75.0.crx chrome/browser/resources/bare/ublock_origin.crx
+
+      - name: Restore the previous stage
+        if: ${{ inputs.stage > 1 }}
+        uses: actions/download-artifact@v7
+        with:
+          name: out-stage-${{ inputs.stage - 1 }}
+          path: /home/runner/work/restore
+
+      - name: Unpack the previous stage
+        if: ${{ inputs.stage > 1 }}
+        run: |
+          set -e
+          sudo apt-get install -y zstd > /dev/null
+          mkdir -p /home/runner/work/chromium/src/out
+          zstd -d -T0 -c /home/runner/work/restore/out.tar.zst | tar -C /home/runner/work/chromium/src/out -xf -
+          rm -rf /home/runner/work/restore
+          ls /home/runner/work/chromium/src/out
+
+      - name: Configure the build
+        run: |
+          set -e
+          export PATH="/home/runner/work/depot_tools:$PATH"
+          cd /home/runner/work/chromium/src
+          mkdir -p out/Crimson
+          cat > out/Crimson/args.gn <<'ARGS'
+          target_os = "android"
+          target_cpu = "arm64"
+          is_desktop_android = true
+          is_official_build = true
+          is_debug = false
+          is_java_debug = false
+          is_component_build = false
+          dcheck_always_on = false
+          android_static_analysis = "off"
+          symbol_level = 0
+          blink_symbol_level = 0
+          v8_symbol_level = 0
+          use_remoteexec = false
+          use_reclient = false
+          proprietary_codecs = true
+          ffmpeg_branding = "Chrome"
+          use_mlkit_for_aicore = false
+          enable_glic_internal_resources = false
+          enable_reporting = false
+          enable_service_discovery = false
+          enable_mdns = false
+          enable_arcore = false
+          enable_cardboard = false
+          enable_openxr = false
+          disable_fieldtrial_testing_config = true
+          use_thin_lto = false
+          concurrent_links = 2
+          chrome_public_manifest_package = "app.crimson.chromium"
+          ARGS
+          python3 /home/runner/work/bare/tools/version.py gn arm64 | grep -v "chrome_public_manifest_package" >> out/Crimson/args.gn
+          cat out/Crimson/args.gn | tail -4
+          # Source files get an old timestamp so a restored build is not redone.
+          find . -path ./out -prune -o -type f -print0 | xargs -0 -P8 touch -d "2020-01-01 00:00:00"
+          gn gen out/Crimson
+
+      - name: Build until time runs low
+        id: ninja
+        run: |
+          export PATH="/home/runner/work/depot_tools:$PATH"
+          cd /home/runner/work/chromium/src
+          END=$(( START + 360*60 - 50*60 ))
+          REMAIN=$(( END - $(date +%s) ))
+          echo "Time for compiling: $((REMAIN/60)) minutes"
+          set +e
+          timeout --signal=INT "${REMAIN}s" autoninja -C out/Crimson chrome_public_apk 2>&1 | tee /home/runner/work/ninja.log | tail -n 40
+          RC=${PIPESTATUS[0]}
+          echo "ninja exit code: $RC"
+          echo "rc=$RC" >> $GITHUB_OUTPUT
+
+      - name: Decide what happened
+        id: result
+        run: |
+          RC="${{ steps.ninja.outputs.rc }}"
+          if [ "$RC" = "0" ]; then
+            echo "done=true" >> $GITHUB_OUTPUT
+          elif [ "$RC" = "124" ] || [ "$RC" = "130" ] || [ "$RC" = "143" ]; then
+            echo "done=false" >> $GITHUB_OUTPUT
+          else
+            echo "done=failed" >> $GITHUB_OUTPUT
+            tail -n 120 /home/runner/work/ninja.log
+            exit 1
+          fi
+
+      - name: Pack this stage
+        if: ${{ steps.result.outputs.done == 'false' }}
+        run: |
+          set -e
+          sudo apt-get install -y zstd > /dev/null
+          mkdir -p /home/runner/work/pack
+          tar -C /home/runner/work/chromium/src/out -cf - Crimson | zstd -T0 -3 -o /home/runner/work/pack/out.tar.zst
+          ls -lh /home/runner/work/pack
+
+      - name: Save this stage
+        if: ${{ steps.result.outputs.done == 'false' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: out-stage-${{ inputs.stage }}
+          path: /home/runner/work/pack/out.tar.zst
+          compression-level: 0
+          retention-days: 3
+
+      - name: Sign the finished APK
+        if: ${{ steps.result.outputs.done == 'true' }}
+        run: |
+          set -e
+          cd /home/runner/work/chromium/src
+          APK=$(find out/Crimson/apks -name 'ChromePublic.apk' | head -n 1)
+          ls -lh "$APK"
+          APKSIGNER=$(find third_party/android_sdk/public/build-tools -name apksigner | sort -V | tail -n 1)
+          keytool -genkeypair -keystore /tmp/ks.jks -alias crimson -keyalg RSA -keysize 2048 -validity 10000 -storepass crimson-temp -keypass crimson-temp -dname "CN=Crimson"
+          mkdir -p /home/runner/work/final
+          cp "$APK" /home/runner/work/final/Crimson-Chromium-arm64.apk
+          "$APKSIGNER" sign --ks /tmp/ks.jks --ks-key-alias crimson --ks-pass pass:crimson-temp --key-pass pass:crimson-temp /home/runner/work/final/Crimson-Chromium-arm64.apk
+
+      - name: Save the finished APK
+        if: ${{ steps.result.outputs.done == 'true' }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: crimson-chromium-arm64
+          path: /home/runner/work/final/Crimson-Chromium-arm64.apk
+          compression-level: 0
+
+      - name: Publish a short log
+        if: always()
+        run: |
+          set +e
+          mkdir -p /tmp/logpub && cd /tmp/logpub
+          git init -q -b chromium-logs
+          {
+            echo "stage: ${STAGE}"
+            echo "result: ${{ steps.result.outputs.done }}"
+            echo "ninja rc: ${{ steps.ninja.outputs.rc }}"
+            echo "run: ${GITHUB_RUN_ID}"
+          } > status-stage-${STAGE}.txt
+          [ -f /home/runner/work/ninja.log ] && tail -n 150 /home/runner/work/ninja.log > ninja-tail-stage-${STAGE}.txt
+          git config user.name "crimson-ci"; git config user.email "ci@crimson.invalid"
+          git add -A; git commit -qm "chromium stage ${STAGE}"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" chromium-logs
