@@ -100,11 +100,14 @@ jobs:
           mkdir -p chrome/browser/resources/bare
           cp /home/runner/work/bare/third_party/ublock_origin/uBlockOrigin-1.75.0.crx chrome/browser/resources/bare/ublock_origin.crx
 
+      - name: Work out the previous stage
+        run: echo "PREV=$(( STAGE - 1 ))" >> $GITHUB_ENV
+
       - name: Restore the previous stage
         if: ${{ inputs.stage > 1 }}
         uses: actions/download-artifact@v7
         with:
-          name: out-stage-${{ inputs.stage - 1 }}
+          name: out-stage-${{ env.PREV }}
           path: /home/runner/work/restore
 
       - name: Unpack the previous stage
