@@ -29,9 +29,9 @@ jobs:
       - name: Make room for the build
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 6144
+          root-reserve-mb: 20480
           temp-reserve-mb: 1024
-          swap-size-mb: 8192
+          swap-size-mb: 4096
           remove-dotnet: "true"
           remove-android: "true"
           remove-haskell: "true"
@@ -41,8 +41,16 @@ jobs:
       - name: Checkout Crimson files
         uses: actions/checkout@v7
 
-      - name: Show space
-        run: df -h / /home/runner/work && free -h && nproc
+      - name: Show space and move caches to the big volume
+        run: |
+          df -h / /home/runner/work || true
+          free -h
+          nproc
+          mkdir -p /home/runner/work/cache /home/runner/work/tmp
+          echo "XDG_CACHE_HOME=/home/runner/work/cache" >> $GITHUB_ENV
+          echo "CIPD_CACHE_DIR=/home/runner/work/cache/cipd" >> $GITHUB_ENV
+          echo "TMPDIR=/home/runner/work/tmp" >> $GITHUB_ENV
+          echo "VPYTHON_VIRTUALENV_ROOT=/home/runner/work/cache/vpython" >> $GITHUB_ENV
 
       - name: Get depot_tools and the Bare patches
         run: |
