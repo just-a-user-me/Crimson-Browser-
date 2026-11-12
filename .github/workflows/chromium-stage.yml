@@ -29,7 +29,7 @@ jobs:
       - name: Make room for the build
         uses: easimon/maximize-build-space@master
         with:
-          root-reserve-mb: 20480
+          root-reserve-mb: 10240
           temp-reserve-mb: 1024
           swap-size-mb: 4096
           remove-dotnet: "true"
@@ -43,31 +43,31 @@ jobs:
 
       - name: Show space and move caches to the big volume
         run: |
-          df -h / /home/runner/work || true
+          df -h / $GITHUB_WORKSPACE || true
           free -h
           nproc
-          mkdir -p /home/runner/work/cache /home/runner/work/tmp
-          echo "XDG_CACHE_HOME=/home/runner/work/cache" >> $GITHUB_ENV
-          echo "CIPD_CACHE_DIR=/home/runner/work/cache/cipd" >> $GITHUB_ENV
-          echo "TMPDIR=/home/runner/work/tmp" >> $GITHUB_ENV
-          echo "VPYTHON_VIRTUALENV_ROOT=/home/runner/work/cache/vpython" >> $GITHUB_ENV
+          mkdir -p $GITHUB_WORKSPACE/cache $GITHUB_WORKSPACE/tmp
+          echo "XDG_CACHE_HOME=$GITHUB_WORKSPACE/cache" >> $GITHUB_ENV
+          echo "CIPD_CACHE_DIR=$GITHUB_WORKSPACE/cache/cipd" >> $GITHUB_ENV
+          echo "TMPDIR=$GITHUB_WORKSPACE/tmp" >> $GITHUB_ENV
+          echo "VPYTHON_VIRTUALENV_ROOT=$GITHUB_WORKSPACE/cache/vpython" >> $GITHUB_ENV
 
       - name: Get depot_tools and the Bare patches
         run: |
           set -e
-          cd /home/runner/work
+          cd $GITHUB_WORKSPACE
           git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
           git clone https://github.com/BareBrowser/bare-browser.git bare
           git -C bare checkout "$BARE_COMMIT"
-          echo "/home/runner/work/depot_tools" >> $GITHUB_PATH
+          echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
 
       - name: Fetch Chromium source
         run: |
           set -e
-          export PATH="/home/runner/work/depot_tools:$PATH"
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
           export DEPOT_TOOLS_UPDATE=0
-          mkdir -p /home/runner/work/chromium
-          cd /home/runner/work/chromium
+          mkdir -p $GITHUB_WORKSPACE/chromium
+          cd $GITHUB_WORKSPACE/chromium
           cat > .gclient <<'GCLIENT'
           solutions = [
             {
@@ -92,21 +92,21 @@ jobs:
       - name: Install build dependencies and run hooks
         run: |
           set -e
-          export PATH="/home/runner/work/depot_tools:$PATH"
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
           export DEPOT_TOOLS_UPDATE=0
-          cd /home/runner/work/chromium/src
+          cd $GITHUB_WORKSPACE/chromium/src
           sudo ./build/install-build-deps.sh --android --no-prompt --no-chromeos-fonts
           gclient runhooks
 
       - name: Apply the patch series
         run: |
           set -e
-          cd /home/runner/work/chromium/src
+          cd $GITHUB_WORKSPACE/chromium/src
           git config user.email "ci@crimson.invalid"
           git config user.name "crimson-ci"
-          git apply --index /home/runner/work/bare/patches/*.patch
+          git apply --index $GITHUB_WORKSPACE/bare/patches/*.patch
           mkdir -p chrome/browser/resources/bare
-          cp /home/runner/work/bare/third_party/ublock_origin/uBlockOrigin-1.75.0.crx chrome/browser/resources/bare/ublock_origin.crx
+          cp $GITHUB_WORKSPACE/bare/third_party/ublock_origin/uBlockOrigin-1.75.0.crx chrome/browser/resources/bare/ublock_origin.crx
 
       - name: Work out the previous stage
         run: echo "PREV=$(( STAGE - 1 ))" >> $GITHUB_ENV
@@ -116,23 +116,23 @@ jobs:
         uses: actions/download-artifact@v7
         with:
           name: out-stage-${{ env.PREV }}
-          path: /home/runner/work/restore
+          path: ${{ github.workspace }}/restore
 
       - name: Unpack the previous stage
         if: ${{ inputs.stage > 1 }}
         run: |
           set -e
           sudo apt-get install -y zstd > /dev/null
-          mkdir -p /home/runner/work/chromium/src/out
-          zstd -d -T0 -c /home/runner/work/restore/out.tar.zst | tar -C /home/runner/work/chromium/src/out -xf -
-          rm -rf /home/runner/work/restore
-          ls /home/runner/work/chromium/src/out
+          mkdir -p $GITHUB_WORKSPACE/chromium/src/out
+          zstd -d -T0 -c $GITHUB_WORKSPACE/restore/out.tar.zst | tar -C $GITHUB_WORKSPACE/chromium/src/out -xf -
+          rm -rf $GITHUB_WORKSPACE/restore
+          ls $GITHUB_WORKSPACE/chromium/src/out
 
       - name: Configure the build
         run: |
           set -e
-          export PATH="/home/runner/work/depot_tools:$PATH"
-          cd /home/runner/work/chromium/src
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          cd $GITHUB_WORKSPACE/chromium/src
           mkdir -p out/Crimson
           cat > out/Crimson/args.gn <<'ARGS'
           target_os = "android"
@@ -164,7 +164,7 @@ jobs:
           concurrent_links = 2
           chrome_public_manifest_package = "app.crimson.chromium"
           ARGS
-          python3 /home/runner/work/bare/tools/version.py gn arm64 | grep -v "chrome_public_manifest_package" >> out/Crimson/args.gn
+          python3 $GITHUB_WORKSPACE/bare/tools/version.py gn arm64 | grep -v "chrome_public_manifest_package" >> out/Crimson/args.gn
           cat out/Crimson/args.gn | tail -4
           # Source files get an old timestamp so a restored build is not redone.
           find . -path ./out -prune -o -type f -print0 | xargs -0 -P8 touch -d "2020-01-01 00:00:00"
@@ -173,13 +173,13 @@ jobs:
       - name: Build until time runs low
         id: ninja
         run: |
-          export PATH="/home/runner/work/depot_tools:$PATH"
-          cd /home/runner/work/chromium/src
+          export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          cd $GITHUB_WORKSPACE/chromium/src
           END=$(( START + 360*60 - 50*60 ))
           REMAIN=$(( END - $(date +%s) ))
           echo "Time for compiling: $((REMAIN/60)) minutes"
           set +e
-          timeout --signal=INT "${REMAIN}s" autoninja -C out/Crimson chrome_public_apk 2>&1 | tee /home/runner/work/ninja.log | tail -n 40
+          timeout --signal=INT "${REMAIN}s" autoninja -C out/Crimson chrome_public_apk 2>&1 | tee $GITHUB_WORKSPACE/ninja.log | tail -n 40
           RC=${PIPESTATUS[0]}
           echo "ninja exit code: $RC"
           echo "rc=$RC" >> $GITHUB_OUTPUT
@@ -194,7 +194,7 @@ jobs:
             echo "done=false" >> $GITHUB_OUTPUT
           else
             echo "done=failed" >> $GITHUB_OUTPUT
-            tail -n 120 /home/runner/work/ninja.log
+            tail -n 120 $GITHUB_WORKSPACE/ninja.log
             exit 1
           fi
 
@@ -203,16 +203,16 @@ jobs:
         run: |
           set -e
           sudo apt-get install -y zstd > /dev/null
-          mkdir -p /home/runner/work/pack
-          tar -C /home/runner/work/chromium/src/out -cf - Crimson | zstd -T0 -3 -o /home/runner/work/pack/out.tar.zst
-          ls -lh /home/runner/work/pack
+          mkdir -p $GITHUB_WORKSPACE/pack
+          tar -C $GITHUB_WORKSPACE/chromium/src/out -cf - Crimson | zstd -T0 -3 -o $GITHUB_WORKSPACE/pack/out.tar.zst
+          ls -lh $GITHUB_WORKSPACE/pack
 
       - name: Save this stage
         if: ${{ steps.result.outputs.done == 'false' }}
         uses: actions/upload-artifact@v7
         with:
           name: out-stage-${{ inputs.stage }}
-          path: /home/runner/work/pack/out.tar.zst
+          path: ${{ github.workspace }}/pack/out.tar.zst
           compression-level: 0
           retention-days: 3
 
@@ -220,21 +220,21 @@ jobs:
         if: ${{ steps.result.outputs.done == 'true' }}
         run: |
           set -e
-          cd /home/runner/work/chromium/src
+          cd $GITHUB_WORKSPACE/chromium/src
           APK=$(find out/Crimson/apks -name 'ChromePublic.apk' | head -n 1)
           ls -lh "$APK"
           APKSIGNER=$(find third_party/android_sdk/public/build-tools -name apksigner | sort -V | tail -n 1)
           keytool -genkeypair -keystore /tmp/ks.jks -alias crimson -keyalg RSA -keysize 2048 -validity 10000 -storepass crimson-temp -keypass crimson-temp -dname "CN=Crimson"
-          mkdir -p /home/runner/work/final
-          cp "$APK" /home/runner/work/final/Crimson-Chromium-arm64.apk
-          "$APKSIGNER" sign --ks /tmp/ks.jks --ks-key-alias crimson --ks-pass pass:crimson-temp --key-pass pass:crimson-temp /home/runner/work/final/Crimson-Chromium-arm64.apk
+          mkdir -p $GITHUB_WORKSPACE/final
+          cp "$APK" $GITHUB_WORKSPACE/final/Crimson-Chromium-arm64.apk
+          "$APKSIGNER" sign --ks /tmp/ks.jks --ks-key-alias crimson --ks-pass pass:crimson-temp --key-pass pass:crimson-temp $GITHUB_WORKSPACE/final/Crimson-Chromium-arm64.apk
 
       - name: Save the finished APK
         if: ${{ steps.result.outputs.done == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: crimson-chromium-arm64
-          path: /home/runner/work/final/Crimson-Chromium-arm64.apk
+          path: ${{ github.workspace }}/final/Crimson-Chromium-arm64.apk
           compression-level: 0
 
       - name: Publish a short log
@@ -249,7 +249,7 @@ jobs:
             echo "ninja rc: ${{ steps.ninja.outputs.rc }}"
             echo "run: ${GITHUB_RUN_ID}"
           } > status-stage-${STAGE}.txt
-          [ -f /home/runner/work/ninja.log ] && tail -n 150 /home/runner/work/ninja.log > ninja-tail-stage-${STAGE}.txt
+          [ -f $GITHUB_WORKSPACE/ninja.log ] && tail -n 150 $GITHUB_WORKSPACE/ninja.log > ninja-tail-stage-${STAGE}.txt
           git config user.name "crimson-ci"; git config user.email "ci@crimson.invalid"
           git add -A; git commit -qm "chromium stage ${STAGE}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" chromium-logs
