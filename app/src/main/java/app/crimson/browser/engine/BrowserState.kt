@@ -18,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import org.mozilla.geckoview.AllowOrDeny
@@ -26,20 +27,6 @@ import org.mozilla.geckoview.GeckoSession
 import org.mozilla.geckoview.GeckoSessionSettings
 import org.mozilla.geckoview.GeckoView
 import org.mozilla.geckoview.WebResponse
-
-/** One browser tab: a Gecko session plus everything the UI shows about it. */
-class Tab(val id: Int, val session: GeckoSession, val isPrivate: Boolean) {
-    var url by mutableStateOf("")
-    var title by mutableStateOf("")
-    var progress by mutableIntStateOf(0)
-    var loading by mutableStateOf(false)
-    var canGoBack by mutableStateOf(false)
-    var canGoForward by mutableStateOf(false)
-    var secure by mutableStateOf(true)
-    var desktop by mutableStateOf(false)
-    var thumbnail by mutableStateOf<ImageBitmap?>(null)
-    var pendingUrl: String? = null
-}
 
 class BrowserState(
     val context: Context,
@@ -55,6 +42,9 @@ class BrowserState(
     var prompt by mutableStateOf<UiPrompt?>(null)
     var contextMenu by mutableStateOf<ContextInfo?>(null)
     var fullscreen by mutableStateOf(false)
+    var customView by mutableStateOf<android.view.View?>(null)
+    var customViewCallback: android.webkit.WebChromeClient.CustomViewCallback? = null
+    var mediaRequest by mutableStateOf(0)
 
     var geckoView: GeckoView? = null
     var filePicker: ((Array<String>, Boolean, (List<Uri>) -> Unit) -> Unit)? = null
@@ -63,12 +53,19 @@ class BrowserState(
     var openExternal: ((String) -> Boolean)? = null
 
     private var nextId = 1
+    internal fun nextTabId(): Int = nextId++
+    private val webEngine = WebEngine(this)
+
+    internal fun addTab(tab: Tab, select: Boolean) {
+        tabs.add(tab)
+        if (select) currentId = tab.id
+    }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
 
     val current: Tab? get() = tabs.firstOrNull { it.id == currentId }
 
     val extensions = ExtensionManager(runtime, settings, media, { showPrompt(it) }) { url ->
-        newTab(url = null, select = true, open = false).session
+        newGeckoTab(private = false, select = true, open = false).session
     }
 
     fun showPrompt(p: UiPrompt) {
@@ -77,21 +74,62 @@ class BrowserState(
 
     // ---- Tabs ----
 
-    fun newTab(url: String?, private: Boolean = false, select: Boolean = true, open: Boolean = true): Tab {
+    /** engine: 0 = Gecko, 1 = Chromium (WebView), -1 = use the default from settings. Private tabs are always Gecko. */
+    fun newTab(
+        url: String?,
+        private: Boolean = false,
+        select: Boolean = true,
+        open: Boolean = true,
+        engine: Int = -1,
+    ): Tab {
+        val which = if (private) 0 else if (engine >= 0) engine else settings.defaultEngine.value
+        if (which == 1 && open) {
+            return webEngine.create(url, select)
+        }
+        val tab = newGeckoTab(private, select, open)
+        if (open && !url.isNullOrBlank()) load(tab, url)
+        return tab
+    }
+
+    fun newGeckoTab(private: Boolean, select: Boolean, open: Boolean): GeckoTab {
         val sessionSettings = GeckoSessionSettings.Builder().usePrivateMode(private).build()
         val session = GeckoSession(sessionSettings)
         if (settings.desktopByDefault.value) {
             session.settings.userAgentMode = GeckoSessionSettings.USER_AGENT_MODE_DESKTOP
             session.settings.viewportMode = GeckoSessionSettings.VIEWPORT_MODE_DESKTOP
         }
-        val tab = Tab(nextId++, session, private)
+        val tab = GeckoTab(nextId++, session, private)
         tab.desktop = settings.desktopByDefault.value
         attach(tab)
         if (open) session.open(runtime)
         tabs.add(tab)
         if (select) currentId = tab.id
-        if (open && !url.isNullOrBlank()) load(tab, url)
         return tab
+    }
+
+    /** Re-opens the current page in the other engine. */
+    fun switchEngine(tab: Tab) {
+        val url = tab.url
+        val other = if (tab.isChromium) 0 else 1
+        val index = tabs.indexOfFirst { it.id == tab.id }
+        val created = newTab(url.ifBlank { null }, private = false, select = true, engine = other)
+        if (index >= 0) {
+            tabs.remove(created)
+            tabs.add(index, created)
+        }
+        closeTab(tab.id)
+        selectTab(created.id)
+    }
+
+    fun exitFullscreen() {
+        val tab = current
+        if (tab is GeckoTab) {
+            tab.session.exitFullScreen()
+        } else {
+            customViewCallback?.onCustomViewHidden()
+            customView = null
+            fullscreen = false
+        }
     }
 
     fun selectTab(id: Int) {
@@ -101,7 +139,7 @@ class BrowserState(
         val tab = current ?: return
         tab.pendingUrl?.let {
             tab.pendingUrl = null
-            tab.session.loadUri(it)
+            tab.loadUrl(it)
         }
     }
 
@@ -109,7 +147,7 @@ class BrowserState(
         val index = tabs.indexOfFirst { it.id == id }
         if (index < 0) return
         val tab = tabs.removeAt(index)
-        tab.session.close()
+        tab.destroy()
         if (tabs.none { !it.isPrivate } && tabs.isEmpty()) {
             newTab(null)
         } else if (currentId == id) {
@@ -123,7 +161,7 @@ class BrowserState(
         if (tabs.isEmpty()) newTab(null)
     }
 
-    private fun tabFor(session: GeckoSession): Tab? = tabs.firstOrNull { it.session === session }
+    private fun tabFor(session: GeckoSession): Tab? = tabs.firstOrNull { it is GeckoTab && it.session === session }
 
     // ---- Loading ----
 
@@ -164,11 +202,11 @@ class BrowserState(
                     delay(500)
                     waited += 500
                 }
-                tab.session.loadUri(url)
+                tab.loadUrl(url)
             }
             return
         }
-        tab.session.loadUri(url)
+        tab.loadUrl(url)
     }
 
     fun open(input: String) {
@@ -178,17 +216,56 @@ class BrowserState(
     }
 
     fun toggleDesktop(tab: Tab) {
-        tab.desktop = !tab.desktop
-        tab.session.settings.userAgentMode =
-            if (tab.desktop) GeckoSessionSettings.USER_AGENT_MODE_DESKTOP else GeckoSessionSettings.USER_AGENT_MODE_MOBILE
-        tab.session.settings.viewportMode =
-            if (tab.desktop) GeckoSessionSettings.VIEWPORT_MODE_DESKTOP else GeckoSessionSettings.VIEWPORT_MODE_MOBILE
-        tab.session.reload()
+        if (tab is WebTab) {
+            webEngine.toggleDesktop(tab)
+            return
+        }
+        val g = tab as? GeckoTab ?: return
+        g.desktop = !g.desktop
+        g.session.settings.userAgentMode =
+            if (g.desktop) GeckoSessionSettings.USER_AGENT_MODE_DESKTOP else GeckoSessionSettings.USER_AGENT_MODE_MOBILE
+        g.session.settings.viewportMode =
+            if (g.desktop) GeckoSessionSettings.VIEWPORT_MODE_DESKTOP else GeckoSessionSettings.VIEWPORT_MODE_MOBILE
+        g.session.reload()
+    }
+
+    fun findInPage(tab: Tab, text: String, backwards: Boolean, onInfo: (String) -> Unit) {
+        if (tab is WebTab) {
+            webEngine.find(tab, text, !backwards)
+            onInfo(tab.findInfo)
+            return
+        }
+        val g = tab as? GeckoTab ?: return
+        if (text.isBlank()) {
+            g.session.finder.clear()
+            onInfo("")
+            return
+        }
+        val flags = if (backwards) GeckoSession.FINDER_FIND_BACKWARDS else 0
+        g.session.finder.find(text, flags).accept(
+            { r -> onInfo(if (r == null || r.total == 0) "No matches" else "${r.current}/${r.total}") },
+            { },
+        )
+    }
+
+    fun clearFind(tab: Tab) {
+        if (tab is WebTab) tab.webView.clearMatches() else (tab as? GeckoTab)?.session?.finder?.clear()
+    }
+
+    fun toggleDevPanel(tab: Tab) {
+        val on = !settings.devMode.value
+        settings.devMode.set(on)
+        if (tab is WebTab) webEngine.toggleDevPanel(tab)
     }
 
     fun captureThumbnail(tab: Tab) {
+        if (tab is WebTab) {
+            webEngine.thumbnail(tab)
+            return
+        }
+        val g = tab as? GeckoTab ?: return
         val view = geckoView ?: return
-        if (view.session !== tab.session) return
+        if (view.session !== g.session) return
         try {
             view.capturePixels().accept(
                 { bmp ->
@@ -204,11 +281,32 @@ class BrowserState(
         }
     }
 
+    fun scanForVideos(tab: Tab) {
+        val page = tab.url
+        if (page.isBlank()) {
+            toast?.invoke("Open a page first")
+            return
+        }
+        toast?.invoke("Looking for videos")
+        scope.launch {
+            val items = try {
+                withContext(Dispatchers.IO) {
+                    VideoScanner.scan(page, android.webkit.CookieManager.getInstance().getCookie(page))
+                }
+            } catch (e: Exception) {
+                emptyList()
+            }
+            items.forEach { media.add(page, it.url, it.mime, it.size) }
+            if (media.itemsFor(page).isEmpty()) toast?.invoke("No videos found on this page") else mediaRequest += 1
+        }
+    }
+
     // ---- Settings and data ----
 
     fun applySettings() {
         GeckoEngine.apply(settings)
         tor.update()
+        tabs.filterIsInstance<WebTab>().forEach { webEngine.applySettings(it) }
     }
 
     fun clearData(
@@ -238,7 +336,7 @@ class BrowserState(
         GeckoEngine.clearEverything()
         stores.history.clear()
         downloads.clearList()
-        tabs.toList().forEach { it.session.close() }
+        tabs.toList().forEach { it.destroy() }
         tabs.clear()
         newTab(null)
     }
@@ -249,7 +347,7 @@ class BrowserState(
         val sp = context.getSharedPreferences("crimson_tabs", Context.MODE_PRIVATE)
         val normal = tabs.filter { !it.isPrivate && it.url.isNotBlank() }
         val arr = JSONArray()
-        normal.forEach { arr.put(JSONObject().put("url", it.url).put("title", it.title)) }
+        normal.forEach { arr.put(JSONObject().put("url", it.url).put("title", it.title).put("engine", if (it.isChromium) 1 else 0)) }
         val selected = normal.indexOfFirst { it.id == currentId }
         sp.edit().putString("tabs", arr.toString()).putInt("selected", selected).apply()
     }
@@ -263,11 +361,16 @@ class BrowserState(
                 val selected = sp.getInt("selected", 0)
                 for (i in 0 until minOf(arr.length(), 12)) {
                     val o = arr.getJSONObject(i)
-                    val tab = newTab(url = null, select = i == selected.coerceAtLeast(0))
+                    val sel = i == selected.coerceAtLeast(0)
+                    val tab = if (o.optInt("engine") == 1) {
+                        webEngine.create(null, sel)
+                    } else {
+                        newGeckoTab(private = false, select = sel, open = true)
+                    }
                     tab.title = o.optString("title")
                     tab.url = o.optString("url")
-                    if (i == selected.coerceAtLeast(0)) {
-                        tab.session.loadUri(tab.url)
+                    if (sel) {
+                        tab.loadUrl(tab.url)
                     } else {
                         tab.pendingUrl = tab.url
                     }
@@ -281,7 +384,7 @@ class BrowserState(
 
     // ---- Delegates ----
 
-    private fun attach(tab: Tab) {
+    private fun attach(tab: GeckoTab) {
         val s = tab.session
 
         s.navigationDelegate = object : GeckoSession.NavigationDelegate {
@@ -332,8 +435,8 @@ class BrowserState(
 
             override fun onNewSession(session: GeckoSession, uri: String): GeckoResult<GeckoSession>? {
                 val parentPrivate = tabFor(session)?.isPrivate ?: false
-                val newTab = newTab(url = null, private = parentPrivate, select = true, open = false)
-                return GeckoResult.fromValue(newTab.session)
+                val created = newGeckoTab(private = parentPrivate, select = true, open = false)
+                return GeckoResult.fromValue(created.session)
             }
         }
 
@@ -420,7 +523,7 @@ class BrowserState(
         s.permissionDelegate = permissionHandler
     }
 
-    private fun recover(tab: Tab) {
+    private fun recover(tab: GeckoTab) {
         val url = tab.url
         tab.session.close()
         tab.session.open(runtime)

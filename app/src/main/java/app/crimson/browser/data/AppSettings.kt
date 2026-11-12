@@ -65,6 +65,8 @@ class AppSettings(context: Context) {
     val iconIndex = IntPref(sp, "icon_index", -1)
     val webTextScale = FloatPref(sp, "web_text_scale", 1f)
     val showShortcuts = BoolPref(sp, "show_shortcuts", true)
+    val uiStyle = IntPref(sp, "ui_style", 1) // 0 classic, 1 liquid glass
+    val defaultEngine = IntPref(sp, "default_engine", 0) // 0 Gecko, 1 Chromium (system WebView)
 
     // Privacy Guard
     val trackingLevel = IntPref(sp, "tracking_level", 2) // 0 off, 1 standard, 2 strict

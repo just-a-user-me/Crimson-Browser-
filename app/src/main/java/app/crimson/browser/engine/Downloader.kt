@@ -41,7 +41,8 @@ class Downloader(private val context: Context) {
     private val userAgent =
         "Mozilla/5.0 (Android 14; Mobile; rv:130.0) Gecko/130.0 Firefox/130.0"
 
-    fun enqueueUrl(url: String, nameHint: String? = null, referer: String? = null, mimeHint: String? = null) {
+    fun enqueueUrl(url: String, nameHint: String? = null, referer: String? = null, mimeHint: String? = null, cookie: String? = null) {
+        val cookies = cookie ?: try { android.webkit.CookieManager.getInstance().getCookie(url) } catch (e: Exception) { null }
         val name = sanitize(nameHint ?: guessName(url, mimeHint))
         val item = DownloadItem(nextId++, name, url)
         mimeHint?.let { item.mime = it }
@@ -49,9 +50,9 @@ class Downloader(private val context: Context) {
         item.job = scope.launch {
             try {
                 if (isHls(url, mimeHint)) {
-                    downloadHls(item, referer)
+                    downloadHls(item, referer, cookies)
                 } else {
-                    downloadDirect(item, referer)
+                    downloadDirect(item, referer, cookies)
                 }
             } catch (e: Exception) {
                 if (item.state != DownloadState.Cancelled) {
@@ -111,20 +112,21 @@ class Downloader(private val context: Context) {
         url.substringBefore("?").lowercase().endsWith(".m3u8") ||
             (mime?.contains("mpegurl", ignoreCase = true) == true)
 
-    private fun open(url: String, referer: String?): HttpURLConnection {
+    private fun open(url: String, referer: String?, cookies: String? = null): HttpURLConnection {
         val conn = URL(url).openConnection() as HttpURLConnection
         conn.instanceFollowRedirects = true
         conn.connectTimeout = 20000
         conn.readTimeout = 30000
         conn.setRequestProperty("User-Agent", userAgent)
         if (!referer.isNullOrBlank()) conn.setRequestProperty("Referer", referer)
+        if (!cookies.isNullOrBlank()) conn.setRequestProperty("Cookie", cookies)
         conn.connect()
         if (conn.responseCode >= 400) throw IllegalStateException("Server returned ${conn.responseCode}")
         return conn
     }
 
-    private fun downloadDirect(item: DownloadItem, referer: String?) {
-        val conn = open(item.url, referer)
+    private fun downloadDirect(item: DownloadItem, referer: String?, cookies: String? = null) {
+        val conn = open(item.url, referer, cookies)
         item.total = conn.contentLengthLong
         conn.contentType?.substringBefore(";")?.let { if (it.isNotBlank()) item.mime = it }
         conn.inputStream.use { saveStream(item, it) }
@@ -175,9 +177,9 @@ class Downloader(private val context: Context) {
         }
     }
 
-    private fun downloadHls(item: DownloadItem, referer: String?) {
+    private fun downloadHls(item: DownloadItem, referer: String?, cookies: String? = null) {
         var playlistUrl = item.url
-        var text = open(playlistUrl, referer).inputStream.bufferedReader().use { it.readText() }
+        var text = open(playlistUrl, referer, cookies).inputStream.bufferedReader().use { it.readText() }
 
         if (text.contains("#EXT-X-STREAM-INF")) {
             // Master playlist: pick the highest-bandwidth variant.
@@ -197,7 +199,7 @@ class Downloader(private val context: Context) {
             }
             val chosen = bestUrl ?: throw IllegalStateException("No stream found in playlist")
             playlistUrl = resolve(playlistUrl, chosen)
-            text = open(playlistUrl, referer).inputStream.bufferedReader().use { it.readText() }
+            text = open(playlistUrl, referer, cookies).inputStream.bufferedReader().use { it.readText() }
         }
 
         if (text.contains("#EXT-X-KEY") && !text.contains("METHOD=NONE")) {
@@ -219,7 +221,7 @@ class Downloader(private val context: Context) {
                 val buffer = ByteArray(64 * 1024)
                 for (segment in segments) {
                     if (item.state == DownloadState.Cancelled) throw InterruptedException("Cancelled")
-                    val conn = open(resolve(playlistUrl, segment), referer)
+                    val conn = open(resolve(playlistUrl, segment), referer, cookies)
                     conn.inputStream.use { input ->
                         while (true) {
                             val n = input.read(buffer)

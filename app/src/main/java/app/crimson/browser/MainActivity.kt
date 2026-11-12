@@ -61,6 +61,7 @@ class MainActivity : ComponentActivity() {
             permissionRequest.launch(permissions)
         }
 
+        app.crimson.browser.engine.AdBlock.init(this)
         browser.extensions.start()
         browser.restoreTabs()
         intent?.data?.toString()?.let { browser.newTab(it) }

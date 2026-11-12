@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
@@ -91,10 +92,12 @@ fun TabSwitcher(
     val normalCount = browser.tabs.count { !it.isPrivate }
     val privateCount = browser.tabs.count { it.isPrivate }
 
+    Box(Modifier.fillMaxSize()) {
+    AmbientBackground()
+    if (privateView) Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.35f)))
     Column(
         Modifier
             .fillMaxSize()
-            .background(if (privateView) c.accentDark.copy(alpha = 0.35f).compositeOver(c.bg) else c.bg)
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
@@ -135,9 +138,8 @@ fun TabSwitcher(
                     val shape = RoundedCornerShape(c.r(22))
                     Column(
                         Modifier
-                            .clip(shape)
-                            .background(c.surface)
-                            .border(if (selected) 2.dp else 1.dp, if (selected) c.accent else c.outline, shape)
+                            .glassPanel(shape)
+                            .border(if (selected) 2.dp else 0.dp, if (selected) c.accent else Color.Transparent, shape)
                             .clickable {
                                 browser.selectTab(tab.id)
                                 onPickTab()
@@ -174,7 +176,7 @@ fun TabSwitcher(
                                     modifier = Modifier.fillMaxSize(),
                                 )
                             } else {
-                                CrimsonLogo(c.accent.copy(alpha = 0.6f), Modifier.size(56.dp))
+                                CrimsonLogo(c.logo.copy(alpha = 0.6f), Modifier.size(56.dp))
                             }
                         }
                     }
@@ -191,6 +193,7 @@ fun TabSwitcher(
                 onPickTab()
             }
         }
+    }
     }
 }
 
@@ -242,7 +245,27 @@ fun MenuSheet(
             settings.forceDark.set(!settings.forceDark.value)
         },
         MenuAction(Icons.Default.Build, "Dev panel", settings.devMode.value) {
-            settings.devMode.set(!settings.devMode.value)
+            tab?.let { browser.toggleDevPanel(it) }
+            onDismiss()
+        },
+        MenuAction(
+            Icons.Default.Refresh,
+            if (tab?.isChromium == true) "Use Gecko" else "Use Chromium",
+        ) {
+            tab?.let { browser.switchEngine(it) }
+            onDismiss()
+        },
+        MenuAction(Icons.Default.Search, "Find videos") {
+            tab?.let { browser.scanForVideos(it) }
+            onDismiss()
+        },
+        MenuAction(Icons.Default.Info, "View source") {
+            tab?.takeIf { it.url.isNotBlank() }?.let { browser.newTab("view-source:" + it.url, engine = 0) }
+            onDismiss()
+        },
+        MenuAction(Icons.Default.Face, "Extensions") {
+            browser.extensions.sheetOpen = true
+            onDismiss()
         },
         MenuAction(Icons.Default.Star, "Bookmarks") { onNavigate(Screen.Bookmarks) },
         MenuAction(Icons.Default.Info, "History") { onNavigate(Screen.History) },
@@ -256,7 +279,7 @@ fun MenuSheet(
 
     Sheet(onDismiss) {
         Row(verticalAlignment = Alignment.CenterVertically) {
-            CrimsonLogo(c.accent, Modifier.size(34.dp))
+            CrimsonLogo(c.logo, Modifier.size(34.dp))
             Spacer(Modifier.width(10.dp))
             Text("Crimson", color = c.onSurface, fontSize = 20.sp, fontWeight = FontWeight.SemiBold)
         }
@@ -285,8 +308,7 @@ private fun MenuTile(action: MenuAction, modifier: Modifier) {
             Modifier
                 .size(50.dp)
                 .clip(RoundedCornerShape(c.r(17)))
-                .background(if (action.active) c.accentBrush else Brush2(c))
-                .border(1.dp, if (action.active) Color.Transparent else c.outline, RoundedCornerShape(c.r(17))),
+                .then(if (action.active) Modifier.background(c.accentBrush) else Modifier.glassPanel(RoundedCornerShape(c.r(17)), 0.9f)),
             contentAlignment = Alignment.Center,
         ) {
             Icon(

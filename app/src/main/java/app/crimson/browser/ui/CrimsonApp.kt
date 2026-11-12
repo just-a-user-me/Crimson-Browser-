@@ -43,7 +43,7 @@ import app.crimson.browser.engine.UiPrompt
 
 enum class Screen {
     Browser, Tabs, Settings, Appearance, PrivacyGuard, Trackers, Https, Fingerprint, Scripts, Cookies,
-    Redirects, SiteSettings, PrivacyAdvanced, Search, Downloads, History, Bookmarks, Addons, About,
+    Redirects, SiteSettings, PrivacyAdvanced, Search, Downloads, History, Bookmarks, Addons, About, Diagnostics,
 }
 
 private fun Context.findActivity(): Activity? {
@@ -85,7 +85,7 @@ fun CrimsonApp(browser: BrowserState, onQuit: () -> Unit) {
         browser.open(url)
     }
 
-    CrimsonTheme(settings.accent.value, settings.themeMode.value, settings.cornerScale.value, settings.uiScale.value) {
+    CrimsonTheme(settings.accent.value, settings.themeMode.value, settings.cornerScale.value, settings.uiScale.value, settings.uiStyle.value == 1) {
         val c = LocalCrimson.current
         val view = LocalView.current
 
@@ -102,14 +102,19 @@ fun CrimsonApp(browser: BrowserState, onQuit: () -> Unit) {
             }
         }
 
+        LaunchedEffect(browser.mediaRequest) {
+            if (browser.mediaRequest > 0) mediaOpen = true
+        }
+
         BackHandler(enabled = screen == Screen.Browser && browser.current?.canGoBack == true) {
-            browser.current?.session?.goBack()
+            browser.current?.goBack()
         }
         BackHandler(enabled = screen == Screen.Browser && findOpen) { findOpen = false }
-        BackHandler(enabled = browser.fullscreen) { browser.current?.session?.exitFullScreen() }
+        BackHandler(enabled = browser.fullscreen) { browser.exitFullscreen() }
         BackHandler(enabled = screen != Screen.Browser) { back() }
         BackHandler(enabled = mediaOpen) { mediaOpen = false }
         BackHandler(enabled = menuOpen) { menuOpen = false }
+        BackHandler(enabled = browser.extensions.sheetOpen) { browser.extensions.sheetOpen = false }
         BackHandler(enabled = browser.contextMenu != null) { browser.contextMenu = null }
 
         Box(Modifier.fillMaxSize().background(c.bg)) {
@@ -144,6 +149,7 @@ fun CrimsonApp(browser: BrowserState, onQuit: () -> Unit) {
                 Screen.Bookmarks -> BookmarksScreen(browser, { back() }) { openInBrowser(it) }
                 Screen.Addons -> AddonsScreen(browser, { back() }) { openInBrowser(it) }
                 Screen.About -> AboutScreen { back() }
+                Screen.Diagnostics -> DiagnosticsScreen(browser, settings) { back() }
             }
 
             if (menuOpen) {
@@ -174,11 +180,31 @@ fun CrimsonApp(browser: BrowserState, onQuit: () -> Unit) {
                 ContextSheet(browser, info) { browser.contextMenu = null }
             }
 
+            browser.customView?.let { v ->
+                androidx.compose.ui.viewinterop.AndroidView(
+                    modifier = Modifier.fillMaxSize().background(Color.Black),
+                    factory = {
+                        (v.parent as? android.view.ViewGroup)?.removeView(v)
+                        v
+                    },
+                )
+            }
+
+            if (browser.extensions.sheetOpen) {
+                ExtensionsSheet(
+                    browser = browser,
+                    onDismiss = { browser.extensions.sheetOpen = false },
+                    onManage = { go(Screen.Addons) },
+                )
+            }
+
+            PopupHost(browser)
+
             PromptHost(browser)
 
             if (showSplash) {
                 CrimsonSplash(
-                    accent = settings.accent.value.let { readableAccent(Color(it), false) },
+                    accent = logoColor(settings.accent.value),
                     backdrop = Color(0xFF0A0B10),
                 ) { showSplash = false }
             }

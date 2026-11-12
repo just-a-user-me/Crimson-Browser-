@@ -1,6 +1,13 @@
 package app.crimson.browser.ui
 
+import android.graphics.Color as AColor
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.layout.Box as BoxLayout
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -38,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -56,10 +64,11 @@ fun ScreenScaffold(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val c = LocalCrimson.current
+    Box(Modifier.fillMaxSize()) {
+    AmbientBackground()
     Column(
         Modifier
             .fillMaxSize()
-            .background(c.bg)
             .statusBarsPadding()
             .navigationBarsPadding(),
     ) {
@@ -101,6 +110,7 @@ fun ScreenScaffold(
                 content = content,
             )
         }
+    }
     }
 }
 
@@ -147,9 +157,7 @@ fun SettingsCard(modifier: Modifier = Modifier, content: @Composable ColumnScope
     Column(
         modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(c.r(26)))
-            .background(c.surface)
-            .border(SurfaceBorder(), RoundedCornerShape(c.r(26)))
+            .glassPanel(RoundedCornerShape(c.r(26)))
             .padding(vertical = 4.dp),
         content = content,
     )
@@ -176,10 +184,10 @@ fun SettingRow(
                 Modifier
                     .size(38.dp)
                     .clip(RoundedCornerShape(c.r(12)))
-                    .background(c.accent.copy(alpha = 0.14f)),
+                    .background(if (c.glass) c.accentBrush else Brush.linearGradient(listOf(c.accent.copy(alpha = 0.14f), c.accent.copy(alpha = 0.14f)))),
                 contentAlignment = Alignment.Center,
             ) {
-                Icon(icon, contentDescription = null, tint = c.accent, modifier = Modifier.size(20.dp))
+                Icon(icon, contentDescription = null, tint = if (c.glass) c.onAccent else c.accent, modifier = Modifier.size(20.dp))
             }
             Spacer(Modifier.width(14.dp))
         }
@@ -304,9 +312,9 @@ fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
     val shape = RoundedCornerShape(c.r(14))
     Box(
         Modifier
-            .clip(shape)
-            .background(if (selected) c.accent.copy(alpha = 0.22f) else c.surfaceHigh)
-            .border(1.dp, if (selected) c.accent else c.outline, shape)
+            .glassPanel(shape, 0.7f)
+            .background(if (selected) c.accent.copy(alpha = 0.28f) else Color.Transparent)
+            .border(1.dp, if (selected) c.accent else Color.Transparent, shape)
             .clickable(onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 10.dp),
         contentAlignment = Alignment.Center,
@@ -331,9 +339,9 @@ fun Sheet(onDismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
             Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(topStart = c.r(30), topEnd = c.r(30)))
-                .background(c.surface)
-                .border(SurfaceBorder(), RoundedCornerShape(topStart = c.r(30), topEnd = c.r(30)))
+                .shadow(24.dp, RoundedCornerShape(topStart = c.r(30), topEnd = c.r(30)), clip = false)
+                .background(c.surface.copy(alpha = if (c.glass) 0.9f else 1f), RoundedCornerShape(topStart = c.r(30), topEnd = c.r(30)))
+                .glassPanel(RoundedCornerShape(topStart = c.r(30), topEnd = c.r(30)))
                 .clickable(interactionSource = remember { MutableInteractionSource() }, indication = null) {}
                 .navigationBarsPadding()
                 .padding(20.dp),
@@ -356,4 +364,82 @@ fun Divider() {
             .height(1.dp)
             .background(LocalCrimson.current.outline),
     )
+}
+
+
+/** Soft colored light behind everything, used by the liquid glass style. */
+@Composable
+fun AmbientBackground(modifier: Modifier = Modifier) {
+    val c = LocalCrimson.current
+    Box(modifier.fillMaxSize().background(c.bg)) {
+        if (c.glass) {
+            val hsv = FloatArray(3)
+            AColor.colorToHSV(c.accent.toArgb(), hsv)
+            hsv[0] = (hsv[0] + 70f) % 360f
+            val other = Color(AColor.HSVToColor(hsv))
+            Canvas(Modifier.fillMaxSize()) {
+                val m = size.minDimension
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(c.accent.copy(alpha = if (c.isLight) 0.26f else 0.38f), Color.Transparent),
+                        center = Offset(size.width * 0.12f, size.height * 0.07f),
+                        radius = m * 0.95f,
+                    ),
+                )
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(c.accentDark.copy(alpha = if (c.isLight) 0.22f else 0.45f), Color.Transparent),
+                        center = Offset(size.width * 0.98f, size.height * 0.55f),
+                        radius = m * 0.9f,
+                    ),
+                )
+                drawRect(
+                    Brush.radialGradient(
+                        listOf(other.copy(alpha = if (c.isLight) 0.14f else 0.2f), Color.Transparent),
+                        center = Offset(size.width * 0.25f, size.height * 1.0f),
+                        radius = m * 0.85f,
+                    ),
+                )
+            }
+        }
+    }
+}
+
+/** A frosted glass panel in the liquid glass style, or a plain surface in the classic style. */
+@Composable
+fun Modifier.glassPanel(shape: Shape, strength: Float = 1f): Modifier {
+    val c = LocalCrimson.current
+    return if (c.glass) {
+        val top = if (c.isLight) Color.White.copy(alpha = 0.78f) else Color.White.copy(alpha = 0.075f + 0.07f * strength)
+        val bottom = if (c.isLight) Color.White.copy(alpha = 0.5f) else Color.White.copy(alpha = 0.02f + 0.03f * strength)
+        val edge = Brush.linearGradient(
+            listOf(
+                Color.White.copy(alpha = if (c.isLight) 0.95f else 0.5f),
+                Color.White.copy(alpha = 0.04f),
+                Color.White.copy(alpha = if (c.isLight) 0.6f else 0.18f),
+            ),
+        )
+        this
+            .clip(shape)
+            .background(Brush.verticalGradient(listOf(top, bottom)))
+            .border(BorderStroke(1.dp, edge), shape)
+    } else {
+        this
+            .clip(shape)
+            .background(c.surface)
+            .border(BorderStroke(1.dp, c.outline), shape)
+    }
+}
+
+/** Glass panel that also floats above the page with a soft shadow. */
+@Composable
+fun Modifier.floatingGlass(shape: Shape): Modifier {
+    val c = LocalCrimson.current
+    val base = if (c.glass) {
+        this.shadow(18.dp, shape, clip = false, ambientColor = Color.Black.copy(alpha = 0.5f), spotColor = c.accent.copy(alpha = 0.35f))
+            .background(c.surface.copy(alpha = 0.82f), shape)
+    } else {
+        this.shadow(8.dp, shape, clip = false)
+    }
+    return base.glassPanel(shape)
 }

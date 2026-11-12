@@ -73,7 +73,9 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import app.crimson.browser.data.AppSettings
 import app.crimson.browser.engine.BrowserState
+import app.crimson.browser.engine.GeckoTab
 import app.crimson.browser.engine.Tab
+import app.crimson.browser.engine.WebTab
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.mozilla.geckoview.GeckoView
@@ -82,7 +84,23 @@ fun displayUrl(url: String): String =
     url.removePrefix("https://").removePrefix("http://").removePrefix("www.").trimEnd('/')
 
 @Composable
-fun GeckoViewHost(browser: BrowserState, tab: Tab, modifier: Modifier = Modifier) {
+fun EngineHost(browser: BrowserState, tab: Tab, modifier: Modifier = Modifier) {
+    when (tab) {
+        is GeckoTab -> GeckoViewHost(browser, tab, modifier)
+        is WebTab -> androidx.compose.runtime.key(tab.id) {
+            AndroidView(
+                modifier = modifier,
+                factory = {
+                    (tab.webView.parent as? android.view.ViewGroup)?.removeView(tab.webView)
+                    tab.webView
+                },
+            )
+        }
+    }
+}
+
+@Composable
+fun GeckoViewHost(browser: BrowserState, tab: GeckoTab, modifier: Modifier = Modifier) {
     AndroidView(
         modifier = modifier,
         factory = { ctx ->
@@ -114,7 +132,9 @@ fun BrowserScreen(
     val top = settings.barAtTop.value
     val fullscreen = browser.fullscreen
 
-    Column(Modifier.fillMaxSize().background(c.bg)) {
+    Box(Modifier.fillMaxSize()) {
+    AmbientBackground()
+    Column(Modifier.fillMaxSize()) {
         if (top && !fullscreen && tab != null) {
             AddressBar(browser, tab, settings, true, onTabs, onMenu) { text, focused ->
                 typed = text
@@ -128,7 +148,7 @@ fun BrowserScreen(
                 .then(if (!top && !fullscreen) Modifier.statusBarsPadding() else Modifier),
         ) {
             if (tab != null) {
-                GeckoViewHost(browser, tab, Modifier.fillMaxSize())
+                EngineHost(browser, tab, Modifier.fillMaxSize())
                 if (tab.url.isEmpty()) {
                     StartPage(browser, settings, Modifier.fillMaxSize())
                 }
@@ -178,6 +198,7 @@ fun BrowserScreen(
                 editing = focused
             }
         }
+    }
     }
 }
 
@@ -238,26 +259,24 @@ private fun AddressBar(
     Column(
         Modifier
             .fillMaxWidth()
-            .background(c.bg)
             .then(if (atTop) Modifier.statusBarsPadding() else Modifier.navigationBarsPadding().imePadding())
-            .padding(horizontal = 10.dp, vertical = 8.dp),
+            .padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(
             Modifier
                 .fillMaxWidth()
-                .clip(barShape)
-                .background(c.surface)
-                .border(1.dp, if (focused) c.accent.copy(alpha = 0.7f) else c.outline, barShape)
+                .floatingGlass(barShape)
+                .border(1.dp, if (focused) c.accent.copy(alpha = 0.8f) else Color.Transparent, barShape)
                 .padding(horizontal = 4.dp, vertical = 4.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            IconTap(Icons.AutoMirrored.Filled.ArrowBack, enabled = tab.canGoBack) { tab.session.goBack() }
+            IconTap(Icons.AutoMirrored.Filled.ArrowBack, enabled = tab.canGoBack) { tab.goBack() }
             Row(
                 Modifier
                     .weight(1f)
                     .height(42.dp)
                     .clip(RoundedCornerShape(c.r(21)))
-                    .background(c.surfaceHigh)
+                    .background(if (c.glass) Color.White.copy(alpha = 0.07f) else c.surfaceHigh)
                     .padding(start = 12.dp, end = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
@@ -301,7 +320,7 @@ private fun AddressBar(
                     IconTapSmall(Icons.Default.Close) { field = TextFieldValue("") ; onEditing("", true) }
                 } else if (tab.url.isNotEmpty()) {
                     IconTapSmall(if (tab.loading) Icons.Default.Close else Icons.Default.Refresh) {
-                        if (tab.loading) tab.session.stop() else tab.session.reload()
+                        if (tab.loading) tab.stop() else tab.reload()
                     }
                 }
             }
@@ -398,25 +417,14 @@ private fun FindBar(browser: BrowserState, tab: Tab, onClose: () -> Unit, modifi
     var info by remember { mutableStateOf("") }
 
     fun run(backwards: Boolean) {
-        if (text.isBlank()) {
-            tab.session.finder.clear()
-            info = ""
-            return
-        }
-        val flags = if (backwards) org.mozilla.geckoview.GeckoSession.FINDER_FIND_BACKWARDS else 0
-        tab.session.finder.find(text, flags).accept(
-            { r -> info = if (r == null || r.total == 0) "No matches" else "${r.current}/${r.total}" },
-            { },
-        )
+        browser.findInPage(tab, text, backwards) { info = it }
     }
 
     Row(
         modifier
             .fillMaxWidth()
             .padding(10.dp)
-            .clip(RoundedCornerShape(c.r(22)))
-            .background(c.surface)
-            .border(1.dp, c.outline, RoundedCornerShape(c.r(22)))
+            .floatingGlass(RoundedCornerShape(c.r(22)))
             .padding(horizontal = 8.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -440,7 +448,7 @@ private fun FindBar(browser: BrowserState, tab: Tab, onClose: () -> Unit, modifi
         IconTap(Icons.Default.KeyboardArrowUp) { run(true) }
         IconTap(Icons.Default.KeyboardArrowDown) { run(false) }
         IconTap(Icons.Default.Close) {
-            tab.session.finder.clear()
+            browser.clearFind(tab)
             onClose()
         }
     }
@@ -494,7 +502,7 @@ fun StartPage(browser: BrowserState, settings: AppSettings, modifier: Modifier =
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            CrimsonLogo(c.accent, Modifier.size(104.dp))
+            CrimsonLogo(c.logo, Modifier.size(104.dp))
             Spacer(Modifier.height(14.dp))
             Text("Crimson", color = if (bitmap != null) Color.White else c.onSurface, fontSize = 32.sp, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(24.dp))

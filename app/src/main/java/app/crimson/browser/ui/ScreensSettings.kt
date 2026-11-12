@@ -52,7 +52,7 @@ fun SettingsRoot(browser: BrowserState, settings: AppSettings, onBack: () -> Uni
             Modifier.fillMaxWidth().padding(vertical = 14.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            CrimsonLogo(c.accent, Modifier.size(54.dp))
+            CrimsonLogo(c.logo, Modifier.size(54.dp))
             Spacer(Modifier.width(14.dp))
             Column {
                 Text("Crimson", color = c.onSurface, fontSize = 22.sp, fontWeight = FontWeight.SemiBold)
@@ -87,9 +87,21 @@ fun SettingsRoot(browser: BrowserState, settings: AppSettings, onBack: () -> Uni
             }
             SwitchRow("Desktop sites by default", settings.desktopByDefault.value, { settings.desktopByDefault.set(it) })
         }
+        SectionLabel("Engine for new tabs")
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Gecko", settings.defaultEngine.value == 0) { settings.defaultEngine.set(0) }
+            Chip("Chromium", settings.defaultEngine.value == 1) { settings.defaultEngine.set(1) }
+        }
+        Text(
+            "Gecko has add-ons and the strongest privacy. Chromium (built into Android) is the most compatible with websites.",
+            color = c.muted,
+            fontSize = 12.sp,
+            modifier = Modifier.padding(start = 12.dp, top = 8.dp, end = 12.dp),
+        )
         GapV(14)
         SettingsCard {
-            SettingRow("About", "Crimson on GeckoView", Icons.Default.Warning, { onNavigate(Screen.About) })
+            SettingRow("Diagnostics", "Check that every feature is working", Icons.Default.Info, { onNavigate(Screen.Diagnostics) })
+            SettingRow("About", "Crimson", Icons.Default.Warning, { onNavigate(Screen.About) })
         }
         GapV(24)
     }
@@ -117,6 +129,12 @@ fun AppearanceScreen(browser: BrowserState, settings: AppSettings, onBack: () ->
                 GapV(12)
                 PillButton("Reset to Crimson", filled = false) { settings.accent.set(AppSettings.DEFAULT_ACCENT) }
             }
+        }
+
+        SectionLabel("Style")
+        Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Liquid glass", settings.uiStyle.value == 1) { settings.uiStyle.set(1) }
+            Chip("Classic", settings.uiStyle.value == 0) { settings.uiStyle.set(0) }
         }
 
         SectionLabel("Theme")
@@ -182,7 +200,7 @@ fun AppearanceScreen(browser: BrowserState, settings: AppSettings, onBack: () ->
                         row.forEach { index ->
                             val selected = settings.iconIndex.value == index
                             val base = if (index < 0) AppSettings.DEFAULT_ACCENT else AppIcons.colors[index].toInt()
-                            val shown = readableAccent(Color(base), false)
+                            val shown = logoColor(base)
                             Box(
                                 Modifier
                                     .size(44.dp)
@@ -238,7 +256,7 @@ fun AboutScreen(onBack: () -> Unit) {
             Modifier.fillMaxWidth().padding(vertical = 30.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            CrimsonLogo(c.accent, Modifier.size(110.dp))
+            CrimsonLogo(c.logo, Modifier.size(110.dp))
             GapV(14)
             Text("Crimson", color = c.onSurface, fontSize = 28.sp, fontWeight = FontWeight.SemiBold)
             Text("Version 0.1", color = c.muted, fontSize = 14.sp)

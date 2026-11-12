@@ -61,6 +61,7 @@ jobs:
               "composeBomVersion": newest(versions(G + "androidx/compose/compose-bom/maven-metadata.xml"), stable),
               "activityComposeVersion": newest(versions(G + "androidx/activity/activity-compose/maven-metadata.xml"), stable),
               "coreKtxVersion": newest(versions(G + "androidx/core/core-ktx/maven-metadata.xml"), stable),
+              "webkitVersion": newest(versions(G + "androidx/webkit/webkit/maven-metadata.xml"), stable),
           }
           gradle = json.loads(get("https://services.gradle.org/versions/current"))["version"]
           with open("gradle.properties", "a") as f:
@@ -73,6 +74,13 @@ jobs:
               log.write("versions: %s gradle=%s\n" % (json.dumps(props), gradle))
           print(props, gradle)
           PYEOF2
+
+      - name: Fetch the ad and tracker domain list
+        run: |
+          set -e
+          mkdir -p app/src/main/assets
+          curl -fsSL https://raw.githubusercontent.com/StevenBlack/hosts/master/hosts -o app/src/main/assets/adhosts.txt
+          wc -l app/src/main/assets/adhosts.txt
 
       - name: Fetch the developer panel library
         run: |

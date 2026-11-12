@@ -29,6 +29,8 @@ class CrimsonColors(
     val accentDark: Color,
     val isLight: Boolean,
     val corner: Float,
+    val glass: Boolean,
+    val logo: Color,
 ) {
     fun r(dp: Int): Dp = (dp * corner).dp
 
@@ -56,7 +58,12 @@ fun gradientLight(accent: Color): Color = lerp(accent, Color.White, 0.28f)
 
 fun gradientDark(accent: Color): Color = lerp(accent, Color.Black, 0.5f)
 
-fun buildColors(accentArgb: Int, mode: Int, corner: Float): CrimsonColors {
+fun logoColor(argb: Int): Color {
+    val c = Color(argb)
+    return if (c.luminance() < 0.06f) lerp(c, Color.White, 0.35f) else c
+}
+
+fun buildColors(accentArgb: Int, mode: Int, corner: Float, glass: Boolean): CrimsonColors {
     val light = mode == 2
     val accent = readableAccent(Color(accentArgb), light)
     val tint = if (light) 0.04f else 0.05f
@@ -73,6 +80,8 @@ fun buildColors(accentArgb: Int, mode: Int, corner: Float): CrimsonColors {
             accentDark = gradientDark(accent),
             isLight = true,
             corner = corner,
+            glass = glass,
+            logo = logoColor(accentArgb),
         )
     } else {
         val amoled = mode == 1
@@ -88,6 +97,8 @@ fun buildColors(accentArgb: Int, mode: Int, corner: Float): CrimsonColors {
             accentDark = gradientDark(accent),
             isLight = false,
             corner = corner,
+            glass = glass,
+            logo = logoColor(accentArgb),
         )
     }
 }
@@ -98,9 +109,10 @@ fun CrimsonTheme(
     mode: Int,
     corner: Float,
     uiScale: Float,
+    glass: Boolean,
     content: @Composable () -> Unit,
 ) {
-    val colors = buildColors(accentArgb, mode, corner)
+    val colors = buildColors(accentArgb, mode, corner, glass)
     val scheme = if (colors.isLight) {
         lightColorScheme(
             primary = colors.accent,
