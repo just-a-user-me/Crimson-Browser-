@@ -1,0 +1,34 @@
+offline mode
+ninja: Entering directory `out/Crimson'
+
+
+disable fast local for non-interactive: fastlocal=1->0
+ use `--fast_local` to enable fast local with non-interactive mode
+schedule pending:1+ready:0 (node:151424 edge:2)
+build start: Ready 1 Pending 1
+rebuild manifest finished
+
+loading build.ninja... done 3.119782901s
+load siso config done 890.658058ms
+schedule pending:1+ready:0 (node:971932 edge:2)
+build start: Ready 1 Pending 1
+rebuild manifest finished
+schedule pending:1+ready:0 (node:971932 edge:8)
+shutdown cloud logging/monitoring done 12.749µs
+
+ 7.17s Error: failed in schedule chrome_public_apk: deps chain:
+  phony/chrome/android/chrome_public_apk ->
+  phony/chrome/android/chrome_public_apk__java ->
+  phony/chrome/android/chrome_public_apk__java__dex ->
+  obj/chrome/android/chrome_public_apk.dex.jar ->
+  obj/chrome/android/chrome_public_apk.javac.jar ->
+  gen/chrome/android/chrome_public_apk__compile_resources.srcjar ->
+  gen/chrome/android/chrome_public_apk/AndroidManifest.merged.xml ->
+  phony/chrome/android/chrome_public_apk__merge_manifests.harddeps ->
+  phony/chrome/android/chrome_public_apk__java__assetres ->
+  phony/gin/v8_snapshot_assets ->
+  gen/gin/v8_snapshot_assets.stamp ->
+  v8_context_snapshot_64.bin ->
+  snapshot_blob.bin ->
+  ../../v8/tools/builtins-pgo/profiles/x64.profile
+ "../../v8/tools/builtins-pgo/profiles/x64.profile", needed by "gen/v8/embedded.S", missing and no known rule to make it

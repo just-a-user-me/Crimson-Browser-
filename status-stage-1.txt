@@ -1,0 +1,4 @@
+stage: 1
+result: failed
+ninja rc: 1
+run: 43349211894
