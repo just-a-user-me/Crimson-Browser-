@@ -167,8 +167,9 @@ jobs:
           python3 $GITHUB_WORKSPACE/bare/tools/version.py gn arm64 | grep -v "chrome_public_manifest_package" >> out/Crimson/args.gn
           cat out/Crimson/args.gn | tail -4
           # Source files get an old timestamp so a restored build is not redone.
-          find . -path ./out -prune -o -type f -print0 | xargs -0 -P8 touch -d "2020-01-01 00:00:00"
-          gn gen out/Crimson
+          find . -path ./out -prune -o \( -type f -o -type l \) -print0 | xargs -0 -P8 touch -h -c -d "2020-01-01 00:00:00" || true
+          set -o pipefail
+          gn gen out/Crimson 2>&1 | tee "$GITHUB_WORKSPACE/configure.log"
 
       - name: Build until time runs low
         id: ninja
@@ -250,6 +251,7 @@ jobs:
             echo "run: ${GITHUB_RUN_ID}"
           } > status-stage-${STAGE}.txt
           [ -f $GITHUB_WORKSPACE/ninja.log ] && tail -n 150 $GITHUB_WORKSPACE/ninja.log > ninja-tail-stage-${STAGE}.txt
+          [ -f $GITHUB_WORKSPACE/configure.log ] && tail -n 80 $GITHUB_WORKSPACE/configure.log > configure-stage-${STAGE}.txt
           git config user.name "crimson-ci"; git config user.email "ci@crimson.invalid"
           git add -A; git commit -qm "chromium stage ${STAGE}"
           git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" chromium-logs
