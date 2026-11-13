@@ -59,6 +59,7 @@ jobs:
           git clone --depth 1 https://chromium.googlesource.com/chromium/tools/depot_tools.git
           git clone https://github.com/BareBrowser/bare-browser.git bare
           git -C bare checkout "$BARE_COMMIT"
+          cd depot_tools && ./ensure_bootstrap && cd ..
           echo "$GITHUB_WORKSPACE/depot_tools" >> $GITHUB_PATH
 
       - name: Fetch Chromium source
@@ -132,6 +133,7 @@ jobs:
         run: |
           set -e
           export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          export DEPOT_TOOLS_UPDATE=0
           cd $GITHUB_WORKSPACE/chromium/src
           mkdir -p out/Crimson
           cat > out/Crimson/args.gn <<'ARGS'
@@ -175,6 +177,7 @@ jobs:
         id: ninja
         run: |
           export PATH="$GITHUB_WORKSPACE/depot_tools:$PATH"
+          export DEPOT_TOOLS_UPDATE=0
           cd $GITHUB_WORKSPACE/chromium/src
           END=$(( START + 360*60 - 50*60 ))
           REMAIN=$(( END - $(date +%s) ))
